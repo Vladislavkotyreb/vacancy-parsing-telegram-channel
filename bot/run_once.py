@@ -66,18 +66,14 @@ async def main() -> int:
         if args.mode == "test":
             posted = await service.send_test_post()
             logger.info("Тест отправлен: %s вакансий", posted)
-            if admin_id:
-                await bot.send_message(
-                    int(admin_id),
-                    f"✅ Тестовая публикация: {posted} вакансий в канале.",
-                )
+            await _notify_admin(bot, admin_id, f"✅ Тестовая публикация: {posted} вакансий в канале.")
             return 0
 
         if args.mode == "status":
             text = format_status(db)
             logger.info("Статус:\n%s", text.replace("<b>", "").replace("</b>", ""))
             if admin_id:
-                await bot.send_message(int(admin_id), text, parse_mode=ParseMode.HTML)
+                await _notify_admin(bot, admin_id, text, parse_mode=ParseMode.HTML)
             else:
                 logger.info(
                     "TELEGRAM_ADMIN_ID не задан — статус только в логах GitHub Actions"
@@ -86,15 +82,34 @@ async def main() -> int:
 
         found, posted = await service.run_daily_post()
         logger.info("Готово: найдено=%s, опубликовано=%s", found, posted)
-        if admin_id:
-            if posted:
-                msg = f"✅ Парсинг завершён.\nНайдено: {found}\nОпубликовано новых: {posted}"
-            else:
-                msg = f"✅ Парсинг завершён.\nНайдено: {found}\nНовых вакансий нет — канал не обновлён."
-            await bot.send_message(int(admin_id), msg)
+        if posted:
+            msg = f"✅ Парсинг завершён.\nНайдено: {found}\nОпубликовано новых: {posted}"
+        else:
+            msg = f"✅ Парсинг завершён.\nНайдено: {found}\nНовых вакансий нет — канал не обновлён."
+        await _notify_admin(bot, admin_id, msg)
         return 0
+    except Exception:
+        logger.exception("Ошибка выполнения режима %s", args.mode)
+        return 1
     finally:
         await bot.session.close()
+
+
+async def _notify_admin(
+    bot: Bot,
+    admin_id: str,
+    text: str,
+    parse_mode: str | None = None,
+) -> None:
+    if not admin_id:
+        return
+    try:
+        kwargs = {"chat_id": int(admin_id), "text": text}
+        if parse_mode:
+            kwargs["parse_mode"] = parse_mode
+        await bot.send_message(**kwargs)
+    except Exception:
+        logger.exception("Не удалось отправить уведомление admin_id=%s", admin_id)
 
 
 if __name__ == "__main__":

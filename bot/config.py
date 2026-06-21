@@ -24,9 +24,15 @@ class Settings:
         token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
         chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
         if not token:
-            raise ValueError("TELEGRAM_BOT_TOKEN не задан в .env")
+            raise ValueError(
+                "TELEGRAM_BOT_TOKEN не задан. "
+                "Локально: .env | GitHub: Settings → Secrets → Actions"
+            )
         if not chat_id:
-            raise ValueError("TELEGRAM_CHAT_ID не задан в .env")
+            raise ValueError(
+                "TELEGRAM_CHAT_ID не задан. "
+                "Локально: .env | GitHub: Settings → Secrets → Actions"
+            )
 
         return cls(
             telegram_bot_token=token,

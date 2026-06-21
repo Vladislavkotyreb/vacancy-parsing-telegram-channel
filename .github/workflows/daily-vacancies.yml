@@ -40,6 +40,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Check required secrets
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          missing=0
+          if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
+            echo "::error::Secret TELEGRAM_BOT_TOKEN не задан"
+            missing=1
+          fi
+          if [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "::error::Secret TELEGRAM_CHAT_ID не задан"
+            missing=1
+          fi
+          exit $missing
+
       - name: Run bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -48,7 +64,11 @@ jobs:
           TELEGRAM_ADMIN_ID: ${{ secrets.TELEGRAM_ADMIN_ID }}
           TIMEZONE: Europe/Moscow
           MAX_POSTS_PER_RUN: "30"
-          RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'fetch' }}
         run: |
           mkdir -p data
-          python -m bot.run_once "${RUN_MODE}"
+          MODE="${{ github.event.inputs.mode }}"
+          if [ -z "$MODE" ]; then
+            MODE="fetch"
+          fi
+          echo "Running mode: $MODE"
+          python -m bot.run_once "$MODE"
