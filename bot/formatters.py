@@ -55,7 +55,7 @@ def format_combined_digest(
 ) -> tuple[list[str], int]:
     """Собирает вакансии в одно или несколько сообщений. Возвращает (тексты, число включённых)."""
     if not new_vacancies:
-        return [], 0
+        return [format_digest_header(0, total_found)], 0
 
     messages: list[str] = []
     parts = [format_digest_header(len(new_vacancies), total_found)]

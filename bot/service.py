@@ -69,11 +69,9 @@ class VacancyService:
             new_vacancies = new_vacancies[: self.settings.max_posts_per_run]
 
             to_post = new_vacancies[: self.settings.max_posts_per_run]
-            posted_new = 0
-            if to_post:
-                posted_new = await self._send_combined(to_post, found_total)
-            else:
-                logger.info("Новых вакансий нет — публикация в канал пропущена")
+            posted_new = await self._send_combined(to_post, found_total)
+            if not to_post:
+                logger.info("Новых вакансий нет — опубликовано уведомление в канал")
 
             for vacancy in vacancies:
                 self.db.save_vacancy(vacancy)
@@ -87,10 +85,9 @@ class VacancyService:
     async def _send_combined(
         self, new_vacancies: list[Vacancy], total_found: int
     ) -> int:
-        if not new_vacancies:
-            return 0
-
         messages, included = format_combined_digest(new_vacancies, total_found)
+        if not messages:
+            return 0
         for message in messages:
             await self._safe_send(message)
             if len(messages) > 1:
