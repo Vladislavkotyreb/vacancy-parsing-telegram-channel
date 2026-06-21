@@ -11,6 +11,7 @@ from aiogram.exceptions import TelegramRetryAfter
 
 from bot.config import Settings
 from bot.database import VacancyDatabase
+from bot.dates import dedupe_by_title_company, is_fresh
 from bot.formatters import format_combined_digest
 from bot.models import Vacancy
 from bot.parsers.base import BaseParser
@@ -51,11 +52,22 @@ class VacancyService:
         return list(all_vacancies.values())
 
     def filter_new(self, vacancies: Iterable[Vacancy]) -> list[Vacancy]:
-        new_items = []
-        for vacancy in vacancies:
-            if not self.db.is_known(vacancy.uid):
-                new_items.append(vacancy)
-        return new_items
+        return [vacancy for vacancy in vacancies if not self.db.is_known(vacancy.uid)]
+
+    def filter_fresh(self, vacancies: Iterable[Vacancy]) -> list[Vacancy]:
+        fresh_items = [
+            vacancy
+            for vacancy in vacancies
+            if is_fresh(vacancy, self.settings.max_vacancy_age_hours)
+        ]
+        skipped = len(list(vacancies)) - len(fresh_items)
+        if skipped:
+            logger.info(
+                "Отфильтровано %s вакансий старше %s ч или без даты публикации",
+                skipped,
+                self.settings.max_vacancy_age_hours,
+            )
+        return fresh_items
 
     async def run_daily_post(self) -> tuple[int, int]:
         run_id = self.db.start_run()
@@ -66,12 +78,22 @@ class VacancyService:
             vacancies = await self.collect_all()
             found_total = len(vacancies)
             new_vacancies = self.filter_new(vacancies)
-            new_vacancies = new_vacancies[: self.settings.max_posts_per_run]
+            fresh_vacancies = self.filter_fresh(new_vacancies)
+            to_post = dedupe_by_title_company(fresh_vacancies)[
+                : self.settings.max_posts_per_run
+            ]
 
-            to_post = new_vacancies[: self.settings.max_posts_per_run]
+            logger.info(
+                "К публикации: %s (новых=%s, свежих=%s, лимит=%s)",
+                len(to_post),
+                len(new_vacancies),
+                len(fresh_vacancies),
+                self.settings.max_posts_per_run,
+            )
+
             posted_new = await self._send_combined(to_post, found_total)
             if not to_post:
-                logger.info("Новых вакансий нет — опубликовано уведомление в канал")
+                logger.info("Новых свежих вакансий нет — опубликовано уведомление в канал")
 
             for vacancy in vacancies:
                 self.db.save_vacancy(vacancy)
@@ -85,7 +107,9 @@ class VacancyService:
     async def _send_combined(
         self, new_vacancies: list[Vacancy], total_found: int
     ) -> int:
-        messages, included = format_combined_digest(new_vacancies, total_found)
+        messages, included = format_combined_digest(
+            new_vacancies, total_found, self.settings.max_vacancy_age_hours
+        )
         if not messages:
             return 0
         for message in messages:

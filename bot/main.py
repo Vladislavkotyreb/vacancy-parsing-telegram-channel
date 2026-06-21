@@ -98,7 +98,7 @@ async def cmd_fetch(message: Message, service: VacancyService) -> None:
     else:
         await message.answer(
             f"✅ Готово.\nНайдено: {found}\n"
-            "Новых вакансий нет — в канал ничего не отправлено.",
+            "Новых свежих вакансий нет — в канал отправлено уведомление.",
         )
 
 

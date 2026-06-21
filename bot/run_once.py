@@ -85,7 +85,10 @@ async def main() -> int:
         if posted:
             msg = f"✅ Парсинг завершён.\nНайдено: {found}\nОпубликовано новых: {posted}"
         else:
-            msg = f"✅ Парсинг завершён.\nНайдено: {found}\nНовых вакансий нет — канал не обновлён."
+            msg = (
+                f"✅ Парсинг завершён.\nНайдено: {found}\n"
+                "Новых свежих вакансий нет — в канал отправлено уведомление."
+            )
         await _notify_admin(bot, admin_id, msg)
         return 0
     except Exception:

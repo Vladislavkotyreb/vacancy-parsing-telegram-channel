@@ -34,11 +34,12 @@ def format_vacancy(vacancy: Vacancy) -> str:
     return "\n".join(lines)
 
 
-def format_digest_header(new_count: int, total_found: int) -> str:
+def format_digest_header(new_count: int, total_found: int, max_age_hours: int = 72) -> str:
     if new_count == 0:
         return (
             "📭 <b>Новых вакансий продуктового дизайнера нет</b>\n"
-            f"Проверено площадок: {len(SOURCE_LABELS)} · найдено всего: {total_found}"
+            f"Проверено площадок: {len(SOURCE_LABELS)} · найдено всего: {total_found}\n"
+            f"Учитываются только вакансии за последние {max_age_hours} ч"
         )
     return (
         f"✨ <b>{new_count} новых вакансий</b> продуктового дизайнера\n"
@@ -51,14 +52,14 @@ def format_continuation_header(part: int, total_parts: int) -> str:
 
 
 def format_combined_digest(
-    new_vacancies: list[Vacancy], total_found: int
+    new_vacancies: list[Vacancy], total_found: int, max_age_hours: int = 72
 ) -> tuple[list[str], int]:
     """Собирает вакансии в одно или несколько сообщений. Возвращает (тексты, число включённых)."""
     if not new_vacancies:
-        return [format_digest_header(0, total_found)], 0
+        return [format_digest_header(0, total_found, max_age_hours)], 0
 
     messages: list[str] = []
-    parts = [format_digest_header(len(new_vacancies), total_found)]
+    parts = [format_digest_header(len(new_vacancies), total_found, max_age_hours)]
     included = 0
 
     for vacancy in new_vacancies:

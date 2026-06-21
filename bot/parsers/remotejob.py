@@ -7,6 +7,7 @@ from urllib.parse import urljoin
 import aiohttp
 from bs4 import BeautifulSoup
 
+from bot.dates import parse_russian_date
 from bot.filters import is_product_designer_vacancy
 from bot.models import Vacancy
 from bot.parsers.base import BaseParser
@@ -75,6 +76,7 @@ class RemoteJobParser(BaseParser):
             h2 = link.find_parent("h2")
             company = "—"
             salary = None
+            published_at = None
             if h2:
                 company_link = h2.select_one('small a[href*="companyName"]')
                 if company_link:
@@ -85,6 +87,8 @@ class RemoteJobParser(BaseParser):
                     salary_text = salary_el.get_text(strip=True)
                     if salary_text and "не указана" not in salary_text.lower():
                         salary = salary_text
+
+                published_at = parse_russian_date(h2.get_text(" ", strip=True))
 
             location = None
             if title and "удален" in title.lower():
@@ -100,6 +104,7 @@ class RemoteJobParser(BaseParser):
                     salary=salary,
                     location=location,
                     work_format="Удалённо",
+                    published_at=published_at,
                 )
             )
 

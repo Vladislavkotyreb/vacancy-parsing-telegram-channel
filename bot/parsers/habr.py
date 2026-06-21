@@ -7,6 +7,7 @@ from urllib.parse import urljoin
 import aiohttp
 from bs4 import BeautifulSoup
 
+from bot.dates import parse_iso_datetime, parse_russian_date
 from bot.filters import is_product_designer_vacancy
 from bot.models import Vacancy
 from bot.parsers.base import BaseParser
@@ -85,6 +86,11 @@ class HabrParser(BaseParser):
             elif "офис" in meta_lower:
                 location = "Офис"
 
+            published_at = None
+            time_el = card.select_one("time[datetime]")
+            if time_el:
+                published_at = parse_iso_datetime(time_el.get("datetime", ""))
+
             results.append(
                 Vacancy(
                     source=self.source,
@@ -94,6 +100,7 @@ class HabrParser(BaseParser):
                     url=urljoin(BASE_URL, href),
                     salary=salary,
                     location=location,
+                    published_at=published_at,
                 )
             )
 

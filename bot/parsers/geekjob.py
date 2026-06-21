@@ -4,6 +4,7 @@ from typing import Any, Optional
 
 import aiohttp
 
+from bot.dates import parse_russian_date
 from bot.filters import is_product_designer_vacancy
 from bot.models import Vacancy
 from bot.parsers.base import BaseParser
@@ -73,6 +74,11 @@ class GeekJobParser(BaseParser):
         if not external_id:
             return None
 
+        published_at = None
+        log = item.get("log") or {}
+        if modify := log.get("modify"):
+            published_at = parse_russian_date(str(modify))
+
         return Vacancy(
             source=self.source,
             external_id=external_id,
@@ -82,4 +88,5 @@ class GeekJobParser(BaseParser):
             salary=item.get("salary"),
             location=location,
             work_format=", ".join(formats) if formats else None,
+            published_at=published_at,
         )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import logging
@@ -25,6 +25,9 @@ class HHParser(BaseParser):
     async def fetch(self) -> list[Vacancy]:
         results: dict[str, Vacancy] = {}
         headers = {"User-Agent": self.settings.hh_user_agent}
+        date_from = (
+            datetime.now(timezone.utc) - timedelta(hours=72)
+        ).date().isoformat()
 
         async with aiohttp.ClientSession(headers=headers) as session:
             for area in HH_AREAS:
@@ -36,6 +39,8 @@ class HHParser(BaseParser):
                             "area": area,
                             "per_page": 100,
                             "page": page,
+                            "order_by": "publication_time",
+                            "date_from": date_from,
                         }
                         async with session.get(self.API_URL, params=params) as resp:
                             if resp.status != 200:
