@@ -42,7 +42,8 @@ def format_digest_header(new_count: int, total_found: int, max_age_hours: int = 
             f"Учитываются только вакансии за последние {max_age_hours} ч"
         )
     return (
-        f"✨ <b>{new_count} новых вакансий</b> продуктового дизайнера\n"
+        f"✨ <b>{new_count} новых вакансий</b> продуктового дизайнера "
+        f"(за последние {max_age_hours} ч)\n"
         f"Источники: {', '.join(SOURCE_LABELS.values())}"
     )
 

@@ -63,7 +63,6 @@ jobs:
           HH_USER_AGENT: ${{ secrets.HH_USER_AGENT }}
           TELEGRAM_ADMIN_ID: ${{ secrets.TELEGRAM_ADMIN_ID }}
           TIMEZONE: Europe/Moscow
-          MAX_POSTS_PER_RUN: "35"
           MAX_VACANCY_AGE_HOURS: "72"
         run: |
           mkdir -p data

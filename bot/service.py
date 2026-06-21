@@ -12,6 +12,7 @@ from aiogram.exceptions import TelegramRetryAfter
 from bot.config import Settings
 from bot.database import VacancyDatabase
 from bot.dates import dedupe_by_title_company, is_fresh
+from bot.debug_log import debug_log
 from bot.formatters import format_combined_digest
 from bot.models import Vacancy
 from bot.parsers.base import BaseParser
@@ -43,11 +44,36 @@ class VacancyService:
         for parser in self.parsers:
             try:
                 vacancies = await parser.fetch()
+                with_date = sum(1 for v in vacancies if v.published_at)
                 logger.info("%s: найдено %s подходящих вакансий", parser.source, len(vacancies))
+                # #region agent log
+                debug_log(
+                    hypothesis_id="A",
+                    location="service.py:collect_all",
+                    message="parser result",
+                    data={
+                        "source": parser.source,
+                        "count": len(vacancies),
+                        "with_published_at": with_date,
+                    },
+                )
+                # #endregion
                 for vacancy in vacancies:
                     all_vacancies[vacancy.uid] = vacancy
-            except Exception:
+            except Exception as exc:
                 logger.exception("Ошибка парсера %s", parser.source)
+                # #region agent log
+                debug_log(
+                    hypothesis_id="A",
+                    location="service.py:collect_all",
+                    message="parser error",
+                    data={
+                        "source": parser.source,
+                        "error_type": type(exc).__name__,
+                        "error": str(exc)[:200],
+                    },
+                )
+                # #endregion
 
         return list(all_vacancies.values())
 
@@ -79,17 +105,31 @@ class VacancyService:
             found_total = len(vacancies)
             new_vacancies = self.filter_new(vacancies)
             fresh_vacancies = self.filter_fresh(new_vacancies)
-            to_post = dedupe_by_title_company(fresh_vacancies)[
-                : self.settings.max_posts_per_run
-            ]
+            to_post = dedupe_by_title_company(fresh_vacancies)
 
             logger.info(
-                "К публикации: %s (новых=%s, свежих=%s, лимит=%s)",
+                "К публикации: %s (новых=%s, свежих за %s ч=%s)",
                 len(to_post),
                 len(new_vacancies),
+                self.settings.max_vacancy_age_hours,
                 len(fresh_vacancies),
-                self.settings.max_posts_per_run,
             )
+            # #region agent log
+            debug_log(
+                hypothesis_id="B,C,D",
+                location="service.py:run_daily_post",
+                message="filter pipeline",
+                data={
+                    "found_total": found_total,
+                    "new_count": len(new_vacancies),
+                    "fresh_count": len(fresh_vacancies),
+                    "deduped_count": len(to_post),
+                    "to_post_count": len(to_post),
+                    "db_total_known": self.db.total_known(),
+                    "no_date_in_new": sum(1 for v in new_vacancies if not v.published_at),
+                },
+            )
+            # #endregion
 
             posted_new = await self._send_combined(to_post, found_total)
             if not to_post:

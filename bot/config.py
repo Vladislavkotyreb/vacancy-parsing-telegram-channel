@@ -16,7 +16,6 @@ class Settings:
     telegram_chat_id: int
     hh_user_agent: str
     timezone: str
-    max_posts_per_run: int
     max_vacancy_age_hours: int
     db_path: Path
 
@@ -43,7 +42,6 @@ class Settings:
                 "ProductDesignerVacancyBot/1.0 (contact@example.com)",
             ).strip(),
             timezone=os.getenv("TIMEZONE", "Europe/Moscow").strip(),
-            max_posts_per_run=int(os.getenv("MAX_POSTS_PER_RUN", "35")),
             max_vacancy_age_hours=int(os.getenv("MAX_VACANCY_AGE_HOURS", "72")),
             db_path=BASE_DIR / "data" / "vacancies.db",
         )
