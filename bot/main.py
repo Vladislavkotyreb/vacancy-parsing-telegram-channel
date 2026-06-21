@@ -57,7 +57,7 @@ async def cmd_start(message: Message) -> None:
     await message.answer(
         "Привет! Я собираю вакансии <b>продуктового дизайнера</b> "
         "с площадок РФ и СНГ и публикую новые каждый день в 12:00 (МСК).\n\n"
-        "Источники: HeadHunter, Habr Career, GeekJob, GetMatch.\n\n"
+        "Источники: HeadHunter, Habr Career, GeekJob, GetMatch, Djinni, DOU, Remote-job.ru.\n\n"
         "Команды:\n"
         "/status — статус последнего прогона\n"
         "/fetch — запустить парсинг вручную\n"

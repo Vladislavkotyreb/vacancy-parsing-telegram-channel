@@ -14,10 +14,13 @@ from bot.database import VacancyDatabase
 from bot.formatters import format_combined_digest
 from bot.models import Vacancy
 from bot.parsers.base import BaseParser
+from bot.parsers.djinni import DjinniParser
+from bot.parsers.dou import DouParser
 from bot.parsers.geekjob import GeekJobParser
 from bot.parsers.getmatch import GetMatchParser
 from bot.parsers.habr import HabrParser
 from bot.parsers.hh import HHParser
+from bot.parsers.remotejob import RemoteJobParser
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,9 @@ class VacancyService:
             HabrParser(),
             GeekJobParser(),
             GetMatchParser(),
+            DjinniParser(),
+            DouParser(),
+            RemoteJobParser(),
         ]
 
     async def collect_all(self) -> list[Vacancy]:

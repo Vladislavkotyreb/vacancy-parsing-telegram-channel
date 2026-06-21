@@ -7,6 +7,9 @@ SOURCE_LABELS = {
     "habr.com": "Habr Career",
     "geekjob.ru": "GeekJob",
     "getmatch.ru": "GetMatch",
+    "djinni.co": "Djinni",
+    "dou.ua": "DOU",
+    "remote-job.ru": "Remote-job.ru",
 }
 
 
