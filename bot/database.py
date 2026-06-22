@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 from zoneinfo import ZoneInfo
@@ -122,14 +122,22 @@ class VacancyDatabase:
             row = conn.execute("SELECT COUNT(*) AS cnt FROM vacancies").fetchone()
             return int(row["cnt"])
 
-    def has_successful_post_today(self, timezone: str) -> bool:
-        last = self.last_run()
-        if not last or last["status"] != "ok":
-            return False
+    def has_successful_post_today(self, timezone_name: str) -> bool:
+        tz = ZoneInfo(timezone_name)
+        today = datetime.now(tz).date()
+        day_start = datetime.combine(today, time.min, tzinfo=tz).astimezone(timezone.utc)
+        day_end = datetime.combine(today, time.max, tzinfo=tz).astimezone(timezone.utc)
 
-        started = datetime.fromisoformat(last["started_at"])
-        if started.tzinfo is None:
-            started = started.replace(tzinfo=timezone.utc)
-
-        tz = ZoneInfo(timezone)
-        return started.astimezone(tz).date() == datetime.now(tz).date()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM run_log
+                WHERE status = 'ok'
+                  AND started_at >= ?
+                  AND started_at <= ?
+                LIMIT 1
+                """,
+                (day_start.isoformat(), day_end.isoformat()),
+            ).fetchone()
+            return row is not None

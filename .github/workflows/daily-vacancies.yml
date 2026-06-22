@@ -37,8 +37,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: data/vacancies.db
-          key: vacancies-db-v1
-          restore-keys: vacancies-db-v1
+          key: vacancies-db-v1-${{ github.run_id }}
+          restore-keys: |
+            vacancies-db-v1-
 
       - name: Install dependencies
         run: |

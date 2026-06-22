@@ -4,6 +4,7 @@ data/
 .env*
 !.env.example
 .venv/
+.cursor/
 __pycache__/
 *.pyc
 .DS_Store

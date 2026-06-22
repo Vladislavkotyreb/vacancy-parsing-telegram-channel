@@ -55,12 +55,13 @@ class VacancyService:
         return [vacancy for vacancy in vacancies if not self.db.is_known(vacancy.uid)]
 
     def filter_fresh(self, vacancies: Iterable[Vacancy]) -> list[Vacancy]:
+        items = list(vacancies)
         fresh_items = [
             vacancy
-            for vacancy in vacancies
+            for vacancy in items
             if is_fresh(vacancy, self.settings.max_vacancy_age_hours)
         ]
-        skipped = len(list(vacancies)) - len(fresh_items)
+        skipped = len(items) - len(fresh_items)
         if skipped:
             logger.info(
                 "Отфильтровано %s вакансий старше %s ч или без даты публикации",
