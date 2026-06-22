@@ -54,12 +54,24 @@ def should_run_scheduled_fetch(db: VacancyDatabase, timezone: str) -> tuple[bool
     if os.getenv("GITHUB_EVENT_NAME") != "schedule":
         return True, "manual run"
 
+    now = datetime.now(ZoneInfo(timezone))
+    today = now.date().isoformat()
+    skip_dates = {
+        value.strip()
+        for value in os.getenv("SCHEDULE_SKIP_DATES", "").split(",")
+        if value.strip()
+    }
+    if today in skip_dates:
+        return False, f"дата {today} в SCHEDULE_SKIP_DATES"
+
     if db.has_successful_post_today(timezone):
         return False, "сегодня уже была успешная публикация"
 
-    hour = datetime.now(ZoneInfo(timezone)).hour
+    hour = now.hour
     if hour < 12:
         return False, f"ещё не 12:00 {timezone} (сейчас {hour}:xx)"
+    if hour > 14:
+        return False, f"окно 12:00–14:59 {timezone} уже закрыто (сейчас {hour}:xx)"
 
     return True, f"окно публикации открыто ({hour}:xx {timezone})"
 
