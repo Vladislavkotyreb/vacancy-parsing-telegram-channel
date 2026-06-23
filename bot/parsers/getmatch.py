@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any, Optional
 
 import aiohttp
 
+from bot.dates import parse_iso_datetime
 from bot.filters import is_product_designer_vacancy
 from bot.models import Vacancy
 from bot.parsers.base import BaseParser
@@ -62,7 +62,7 @@ class GetMatchParser(BaseParser):
 
         published_at = None
         if published := offer.get("published_at"):
-            published_at = datetime.fromisoformat(published.replace("Z", "+00:00"))
+            published_at = parse_iso_datetime(str(published))
 
         company_info = offer.get("company") or {}
         company = company_info.get("name") or offer.get("company_name") or "—"

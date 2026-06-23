@@ -106,7 +106,10 @@ class VacancyService:
             if not to_post:
                 logger.info("Новых свежих вакансий нет — опубликовано уведомление в канал")
 
-            for vacancy in vacancies:
+            # Запоминаем только опубликованные вакансии: база = «уже в канале».
+            # Иначе вакансия, впервые увиденная без даты, навсегда блокировалась бы
+            # дедупом по названию+компании, когда позже у неё появится дата.
+            for vacancy in to_post:
                 self.db.save_vacancy(vacancy)
 
             self.db.finish_run(run_id, found_total, posted_new, "ok")

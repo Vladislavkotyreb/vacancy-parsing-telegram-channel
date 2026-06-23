@@ -29,7 +29,7 @@ def format_vacancy(vacancy: Vacancy) -> str:
         lines.append(f"📍 {escape_html(location)}")
 
     lines.append(f"🔗 {source}")
-    lines.append(f'<a href="{vacancy.url}">Открыть вакансию</a>')
+    lines.append(f'<a href="{escape_html(vacancy.url)}">Открыть вакансию</a>')
 
     return "\n".join(lines)
 
