@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterator, Optional
 from zoneinfo import ZoneInfo
 
+from bot.dates import dedupe_key
 from bot.models import Vacancy
 
 
@@ -15,6 +16,7 @@ class VacancyDatabase:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
+        self._migrate()
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -40,7 +42,8 @@ class VacancyDatabase:
                     location TEXT,
                     url TEXT NOT NULL,
                     published_at TEXT,
-                    first_seen_at TEXT NOT NULL
+                    first_seen_at TEXT NOT NULL,
+                    dedup_key TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS run_log (
@@ -54,10 +57,38 @@ class VacancyDatabase:
                 """
             )
 
+    def _migrate(self) -> None:
+        with self._connect() as conn:
+            columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(vacancies)")
+            }
+            if "dedup_key" not in columns:
+                conn.execute("ALTER TABLE vacancies ADD COLUMN dedup_key TEXT")
+
+            rows = conn.execute(
+                "SELECT uid, title, company FROM vacancies WHERE dedup_key IS NULL"
+            ).fetchall()
+            for row in rows:
+                conn.execute(
+                    "UPDATE vacancies SET dedup_key = ? WHERE uid = ?",
+                    (dedupe_key(row["title"], row["company"] or ""), row["uid"]),
+                )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_vacancies_dedup_key ON vacancies (dedup_key)"
+            )
+
     def is_known(self, uid: str) -> bool:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT 1 FROM vacancies WHERE uid = ?", (uid,)
+            ).fetchone()
+            return row is not None
+
+    def is_title_company_known(self, title: str, company: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM vacancies WHERE dedup_key = ? LIMIT 1",
+                (dedupe_key(title, company or ""),),
             ).fetchone()
             return row is not None
 
@@ -67,8 +98,8 @@ class VacancyDatabase:
             conn.execute(
                 """
                 INSERT OR IGNORE INTO vacancies
-                (uid, source, external_id, title, company, salary, location, url, published_at, first_seen_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (uid, source, external_id, title, company, salary, location, url, published_at, first_seen_at, dedup_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     vacancy.uid,
@@ -81,6 +112,7 @@ class VacancyDatabase:
                     vacancy.url,
                     vacancy.published_at.isoformat() if vacancy.published_at else None,
                     now,
+                    dedupe_key(vacancy.title, vacancy.company or ""),
                 ),
             )
 

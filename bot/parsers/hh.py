@@ -46,6 +46,13 @@ class HHParser(BaseParser):
                             "date_to": date_to,
                         }
                         async with session.get(self.API_URL, params=params) as resp:
+                            if resp.status == 403:
+                                logger.warning(
+                                    "HH.ru API 403 (доступ запрещён, auth=%s). "
+                                    "Пропускаю источник — задайте HH_ACCESS_TOKEN.",
+                                    "yes" if self.settings.hh_access_token else "no",
+                                )
+                                return list(results.values())
                             if resp.status != 200:
                                 body = await resp.text()
                                 logger.warning(

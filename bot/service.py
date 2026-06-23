@@ -52,7 +52,19 @@ class VacancyService:
         return list(all_vacancies.values())
 
     def filter_new(self, vacancies: Iterable[Vacancy]) -> list[Vacancy]:
-        return [vacancy for vacancy in vacancies if not self.db.is_known(vacancy.uid)]
+        new_items: list[Vacancy] = []
+        for vacancy in vacancies:
+            if self.db.is_known(vacancy.uid):
+                continue
+            if self.db.is_title_company_known(vacancy.title, vacancy.company):
+                logger.info(
+                    "Пропуск дубля по названию+компании: %s / %s",
+                    vacancy.title,
+                    vacancy.company,
+                )
+                continue
+            new_items.append(vacancy)
+        return new_items
 
     def filter_fresh(self, vacancies: Iterable[Vacancy]) -> list[Vacancy]:
         items = list(vacancies)
