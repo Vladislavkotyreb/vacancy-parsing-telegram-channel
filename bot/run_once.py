@@ -67,11 +67,13 @@ def should_run_scheduled_fetch(db: VacancyDatabase, timezone: str) -> tuple[bool
     if db.has_successful_post_today(timezone):
         return False, "сегодня уже была успешная публикация"
 
+    # GitHub Actions часто запускает cron с большой задержкой и не в нужный слот.
+    # Поэтому не ставим верхнюю границу окна: постим один раз в день при первом
+    # же сработавшем запуске начиная с 12:00 МСК. Идеально это 12:00–14:59, но
+    # если GitHub запустил позже — пост всё равно выйдет (а не потеряется).
     hour = now.hour
     if hour < 12:
         return False, f"ещё не 12:00 {timezone} (сейчас {hour}:xx)"
-    if hour > 14:
-        return False, f"окно 12:00–14:59 {timezone} уже закрыто (сейчас {hour}:xx)"
 
     return True, f"окно публикации открыто ({hour}:xx {timezone})"
 

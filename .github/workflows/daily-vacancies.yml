@@ -2,10 +2,13 @@ name: Daily Vacancies
 
 on:
   schedule:
-    # Каждые 5 минут в окне 12:00–14:59 Europe/Moscow = 09:00–11:59 UTC.
-    # GitHub schedule может пропускать отдельные cron-слоты, поэтому делаем
-    # много попыток, а код ниже защищает от повторной публикации в тот же день.
-    - cron: "*/5 9-11 * * *"
+    # Цель: один пост в день, в идеале 12:00–14:59 Europe/Moscow (09:00–11:59 UTC).
+    # GitHub Actions сильно задерживает и пропускает cron-слоты, поэтому:
+    #  - частые попытки в основном окне (12:00–14:59 МСК)
+    #  - почасовой фолбэк до позднего вечера, чтобы пост вышел даже при задержке.
+    # Код защищён has_successful_post_today: за день публикуется ровно один раз.
+    - cron: "*/10 9-11 * * *"
+    - cron: "0 12-20 * * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -73,7 +76,6 @@ jobs:
           TELEGRAM_ADMIN_ID: ${{ secrets.TELEGRAM_ADMIN_ID }}
           TIMEZONE: Europe/Moscow
           MAX_VACANCY_AGE_HOURS: "72"
-          SCHEDULE_SKIP_DATES: "2026-06-23"
         run: |
           mkdir -p data
           MODE="${{ github.event.inputs.mode }}"
