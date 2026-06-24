@@ -4,7 +4,10 @@ import asyncio
 import logging
 from datetime import datetime
 from typing import Any, Awaitable, Callable
-from zoneinfo import ZoneInfo
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
 
 from aiogram import Bot, Dispatcher, Router
 from aiogram.filters import Command

@@ -5,7 +5,10 @@ from contextlib import contextmanager
 from datetime import datetime, time, timezone
 from pathlib import Path
 from typing import Iterator, Optional
-from zoneinfo import ZoneInfo
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
 
 from bot.dates import dedupe_key
 from bot.models import Vacancy

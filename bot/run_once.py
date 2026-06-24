@@ -8,7 +8,10 @@ import logging
 import os
 import sys
 from datetime import datetime
-from zoneinfo import ZoneInfo
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
 
 from aiogram import Bot
 from aiogram.enums import ParseMode
