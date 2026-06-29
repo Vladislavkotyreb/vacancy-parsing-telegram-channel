@@ -106,3 +106,73 @@ def is_graphic_designer_vacancy(title: str) -> bool:
 
 def is_communication_designer_vacancy(title: str) -> bool:
     return _matches(title, COMMUNICATION_INCLUDE, COMMUNICATION_EXCLUDE)
+
+
+DEV_STACK_EXCLUDE = [
+    re.compile(r"\bqa\b|quality assurance|тестиров", re.I),
+    re.compile(r"devops|sre|site reliability", re.I),
+    re.compile(r"дизайн|designer|design\b", re.I),
+    re.compile(r"product\s*manager|продуктов(?:ый|ого)\s*менедж", re.I),
+    re.compile(r"data\s*(?:scientist|analyst)|аналитик\s*данных", re.I),
+    re.compile(r"full[\s-]*stack|фулстак|fullstack", re.I),
+]
+
+
+def is_react_developer_vacancy(title: str) -> bool:
+    include = [re.compile(r"react(?:\.?\s*js)?|react[\s-]*разработ", re.I)]
+    exclude = DEV_STACK_EXCLUDE + [
+        re.compile(r"back[\s-]*end|бэкенд", re.I),
+        re.compile(r"\bvue\b", re.I),
+        re.compile(r"\bangular\b", re.I),
+    ]
+    return _matches(title, include, exclude)
+
+
+def is_vue_developer_vacancy(title: str) -> bool:
+    include = [re.compile(r"vue(?:\.?\s*js)?|vue[\s-]*разработ", re.I)]
+    exclude = DEV_STACK_EXCLUDE + [
+        re.compile(r"back[\s-]*end|бэкенд", re.I),
+        re.compile(r"\breact\b", re.I),
+        re.compile(r"\bangular\b", re.I),
+    ]
+    return _matches(title, include, exclude)
+
+
+def is_angular_developer_vacancy(title: str) -> bool:
+    include = [re.compile(r"angular|angular[\s-]*разработ", re.I)]
+    exclude = DEV_STACK_EXCLUDE + [
+        re.compile(r"back[\s-]*end|бэкенд", re.I),
+        re.compile(r"\breact\b", re.I),
+        re.compile(r"\bvue\b", re.I),
+    ]
+    return _matches(title, include, exclude)
+
+
+def is_python_developer_vacancy(title: str) -> bool:
+    include = [re.compile(r"python|python[\s-]*разработ", re.I)]
+    exclude = DEV_STACK_EXCLUDE + [
+        re.compile(r"front[\s-]*end|фронтенд", re.I),
+    ]
+    return _matches(title, include, exclude)
+
+
+def is_java_developer_vacancy(title: str) -> bool:
+    include = [re.compile(r"java|java[\s-]*разработ", re.I)]
+    exclude = DEV_STACK_EXCLUDE + [
+        re.compile(r"javascript|typescript", re.I),
+        re.compile(r"front[\s-]*end|фронтенд", re.I),
+    ]
+    return _matches(title, include, exclude)
+
+
+def is_go_developer_vacancy(title: str) -> bool:
+    include = [
+        re.compile(r"golang|go[\s-]*lang", re.I),
+        re.compile(r"\bgo\s+(?:developer|разработ|engineer|backend)", re.I),
+        re.compile(r"go[\s-]*разработ", re.I),
+    ]
+    exclude = DEV_STACK_EXCLUDE + [
+        re.compile(r"front[\s-]*end|фронтенд", re.I),
+        re.compile(r"google", re.I),
+    ]
+    return _matches(title, include, exclude)

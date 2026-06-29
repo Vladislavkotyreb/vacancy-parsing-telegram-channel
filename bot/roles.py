@@ -5,10 +5,16 @@ from typing import Callable, Optional
 
 from bot.filters import is_product_designer_vacancy
 from bot.role_filters import (
+    is_angular_developer_vacancy,
     is_backend_vacancy,
     is_communication_designer_vacancy,
     is_frontend_vacancy,
+    is_go_developer_vacancy,
     is_graphic_designer_vacancy,
+    is_java_developer_vacancy,
+    is_python_developer_vacancy,
+    is_react_developer_vacancy,
+    is_vue_developer_vacancy,
 )
 
 
@@ -72,6 +78,67 @@ ROLES: dict[str, Role] = {
         uses_getmatch=True,
         matcher=is_graphic_designer_vacancy,
     ),
+    "frontend_react": Role(
+        id="frontend_react",
+        label="React-разработчика",
+        button_label="Frontend | React",
+        hh_queries=("react developer", "react разработчик", "frontend react", "react frontend"),
+        habr_queries=("react", "react developer", "react разработчик"),
+        geekjob_queries=("react", "react developer"),
+        uses_getmatch=False,
+        matcher=is_react_developer_vacancy,
+    ),
+    "frontend_vue": Role(
+        id="frontend_vue",
+        label="Vue-разработчика",
+        button_label="Frontend | Vue",
+        hh_queries=("vue developer", "vue разработчик", "vue.js developer", "frontend vue"),
+        habr_queries=("vue", "vue.js", "vue developer", "vue разработчик"),
+        geekjob_queries=("vue", "vue.js", "vue developer"),
+        uses_getmatch=False,
+        matcher=is_vue_developer_vacancy,
+    ),
+    "frontend_angular": Role(
+        id="frontend_angular",
+        label="Angular-разработчика",
+        button_label="Frontend | Angular",
+        hh_queries=("angular developer", "angular разработчик", "frontend angular"),
+        habr_queries=("angular", "angular developer", "angular разработчик"),
+        geekjob_queries=("angular", "angular developer"),
+        uses_getmatch=False,
+        matcher=is_angular_developer_vacancy,
+    ),
+    "backend_python": Role(
+        id="backend_python",
+        label="Python-разработчика",
+        button_label="Backend | Python",
+        hh_queries=("python developer", "python разработчик", "python backend", "django developer"),
+        habr_queries=("python", "python developer", "python разработчик"),
+        geekjob_queries=("python", "python developer", "django"),
+        uses_getmatch=False,
+        matcher=is_python_developer_vacancy,
+    ),
+    "backend_java": Role(
+        id="backend_java",
+        label="Java-разработчика",
+        button_label="Backend | Java",
+        hh_queries=("java developer", "java разработчик", "java backend", "spring developer"),
+        habr_queries=("java developer", "java разработчик", "java backend"),
+        geekjob_queries=("java", "java developer", "spring"),
+        uses_getmatch=False,
+        matcher=is_java_developer_vacancy,
+    ),
+    "backend_go": Role(
+        id="backend_go",
+        label="Go-разработчика",
+        button_label="Backend | Go",
+        hh_queries=("go developer", "golang developer", "go разработчик", "golang разработчик"),
+        habr_queries=("golang", "go developer", "go разработчик"),
+        geekjob_queries=("golang", "go developer", "go backend"),
+        uses_getmatch=False,
+        matcher=is_go_developer_vacancy,
+    ),
+    # Legacy — для уже подписанных пользователей, не показываем в меню
     "frontend": Role(
         id="frontend",
         label="frontend-разработчика",
@@ -108,12 +175,17 @@ ROLES: dict[str, Role] = {
     ),
 }
 
+# Порядок кнопок в меню выбора роли
 MVP_ROLE_IDS = (
     "product_designer",
     "communication_designer",
     "graphic_designer",
-    "frontend",
-    "backend",
+    "frontend_react",
+    "frontend_vue",
+    "frontend_angular",
+    "backend_python",
+    "backend_java",
+    "backend_go",
 )
 
 

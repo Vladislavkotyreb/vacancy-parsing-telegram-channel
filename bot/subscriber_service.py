@@ -12,7 +12,7 @@ from bot.config import Settings
 from bot.database import VacancyDatabase
 from bot.dates import dedupe_by_title_company, is_fresh
 from bot.models import Vacancy
-from bot.roles import MVP_ROLE_IDS, ROLES, get_role
+from bot.roles import ROLES, get_role
 from bot.subscriber_collect import collect_for_role
 from bot.subscriber_formatters import format_subscriber_digest
 
@@ -36,8 +36,7 @@ class SubscriberService:
             by_role.setdefault(row["role"], []).append(int(row["user_id"]))
 
         total_messages = 0
-        for role_id in MVP_ROLE_IDS:
-            user_ids = by_role.get(role_id, [])
+        for role_id, user_ids in by_role.items():
             if not user_ids:
                 continue
 
