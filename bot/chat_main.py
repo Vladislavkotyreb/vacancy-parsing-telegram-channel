@@ -15,7 +15,9 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
     Message,
+    ReplyKeyboardMarkup,
     TelegramObject,
 )
 
@@ -26,6 +28,10 @@ from bot.roles import MVP_ROLE_IDS, ROLES
 logger = logging.getLogger(__name__)
 router = Router()
 PID_FILE = Path(__file__).resolve().parent.parent / "logs" / "chat-bot.pid"
+
+BTN_CHOOSE_ROLE = "🎯 Выбрать роль"
+BTN_MY_SUBSCRIPTION = "📋 Моя подписка"
+BTN_UNSUBSCRIBE = "🚫 Отписаться"
 
 
 def _acquire_single_instance() -> None:
@@ -59,7 +65,18 @@ class InjectMiddleware:
         return await handler(event, data)
 
 
-def role_keyboard() -> InlineKeyboardMarkup:
+def main_menu_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_CHOOSE_ROLE)],
+            [KeyboardButton(text=BTN_MY_SUBSCRIPTION), KeyboardButton(text=BTN_UNSUBSCRIBE)],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def role_inline_keyboard() -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text=ROLES[role_id].button_label, callback_data=f"role:{role_id}")]
         for role_id in MVP_ROLE_IDS
@@ -67,17 +84,90 @@ def role_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-@router.message(Command("start"))
-async def cmd_start(message: Message) -> None:
+async def send_role_picker(message: Message) -> None:
     await message.answer(
         "Привет! Выбери роль — каждый день в <b>10:00 (МСК)</b> "
         "я буду присылать новые вакансии в личку.\n\n"
-        "Источники: HeadHunter, Habr Career, GeekJob, GetMatch (для дизайнеров).\n\n"
-        "Можно сменить роль — просто нажми /start снова.\n"
-        "Отписаться: /stop",
+        "Источники: HeadHunter, Habr Career, GeekJob, GetMatch (для дизайнеров).",
         parse_mode="HTML",
-        reply_markup=role_keyboard(),
+        reply_markup=main_menu_keyboard(),
     )
+    await message.answer(
+        "Нажми на роль:",
+        reply_markup=role_inline_keyboard(),
+    )
+
+
+async def send_subscription_info(message: Message, db: VacancyDatabase) -> None:
+    if not message.from_user:
+        return
+
+    subscriber = db.get_subscriber(message.from_user.id)
+    if not subscriber:
+        await message.answer(
+            "Ты пока не подписан.\nНажми «🎯 Выбрать роль» и выбери направление.",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+
+    role = ROLES.get(subscriber["role"])
+    label = role.label if role else subscriber["role"]
+    await message.answer(
+        f"Текущая подписка: <b>{label}</b>\n"
+        "Сменить роль — «🎯 Выбрать роль»\n"
+        "Отписаться — «🚫 Отписаться»",
+        parse_mode="HTML",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
+async def unsubscribe_user(message: Message, db: VacancyDatabase) -> None:
+    if not message.from_user:
+        return
+
+    subscriber = db.get_subscriber(message.from_user.id)
+    if not subscriber:
+        await message.answer(
+            "Ты не подписан на рассылку.",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+
+    db.deactivate_subscriber(message.from_user.id)
+    await message.answer(
+        "Подписка отменена.\nЧтобы вернуться — «🎯 Выбрать роль».",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
+@router.message(Command("start"))
+async def cmd_start(message: Message) -> None:
+    await send_role_picker(message)
+
+
+@router.message(F.text == BTN_CHOOSE_ROLE)
+async def btn_choose_role(message: Message) -> None:
+    await send_role_picker(message)
+
+
+@router.message(F.text == BTN_MY_SUBSCRIPTION)
+async def btn_my_subscription(message: Message, db: VacancyDatabase) -> None:
+    await send_subscription_info(message, db)
+
+
+@router.message(F.text == BTN_UNSUBSCRIBE)
+async def btn_unsubscribe(message: Message, db: VacancyDatabase) -> None:
+    await unsubscribe_user(message, db)
+
+
+@router.message(Command("stop"))
+async def cmd_stop(message: Message, db: VacancyDatabase) -> None:
+    await unsubscribe_user(message, db)
+
+
+@router.message(Command("myrole"))
+async def cmd_myrole(message: Message, db: VacancyDatabase) -> None:
+    await send_subscription_info(message, db)
 
 
 @router.callback_query(F.data.startswith("role:"))
@@ -93,46 +183,24 @@ async def on_role_selected(callback: CallbackQuery, db: VacancyDatabase) -> None
 
     db.set_subscriber(callback.from_user.id, role_id)
     await callback.answer("Подписка оформлена")
+
     if callback.message:
         await callback.message.edit_text(
             f"✅ Готово! Каждый день в <b>10:00 (МСК)</b> буду присылать "
-            f"новые вакансии <b>{role.label}</b>.\n\n"
-            "Сменить роль: /start\n"
-            "Отписаться: /stop",
+            f"новые вакансии <b>{role.label}</b>.",
             parse_mode="HTML",
+        )
+        await callback.message.answer(
+            "Меню управления подпиской — кнопки ниже 👇",
+            reply_markup=main_menu_keyboard(),
         )
 
 
-@router.message(Command("stop"))
-async def cmd_stop(message: Message, db: VacancyDatabase) -> None:
-    if not message.from_user:
-        return
-
-    subscriber = db.get_subscriber(message.from_user.id)
-    if not subscriber:
-        await message.answer("Ты не подписан на рассылку.")
-        return
-
-    db.deactivate_subscriber(message.from_user.id)
-    await message.answer("Подписка отменена. Вернуться: /start")
-
-
-@router.message(Command("myrole"))
-async def cmd_myrole(message: Message, db: VacancyDatabase) -> None:
-    if not message.from_user:
-        return
-
-    subscriber = db.get_subscriber(message.from_user.id)
-    if not subscriber:
-        await message.answer("Ты не подписан. Выбери роль: /start")
-        return
-
-    role = ROLES.get(subscriber["role"])
-    label = role.label if role else subscriber["role"]
+@router.message()
+async def fallback(message: Message) -> None:
     await message.answer(
-        f"Текущая подписка: <b>{label}</b>\n"
-        "Сменить: /start · Отписаться: /stop",
-        parse_mode="HTML",
+        "Используй кнопки меню 👇",
+        reply_markup=main_menu_keyboard(),
     )
 
 
