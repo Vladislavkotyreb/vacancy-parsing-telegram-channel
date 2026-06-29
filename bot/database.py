@@ -201,6 +201,7 @@ class VacancyDatabase:
             return row is not None
 
     def set_subscriber(self, user_id: int, role: str) -> None:
+        existing = self.get_subscriber(user_id)
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
             conn.execute(
@@ -213,6 +214,15 @@ class VacancyDatabase:
                     active = 1
                 """,
                 (user_id, role, now),
+            )
+        if existing and existing["role"] != role:
+            self.clear_subscriber_sent(user_id)
+
+    def clear_subscriber_sent(self, user_id: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM subscriber_sent WHERE user_id = ?",
+                (user_id,),
             )
 
     def get_subscriber(self, user_id: int) -> Optional[dict]:

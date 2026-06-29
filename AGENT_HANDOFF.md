@@ -1,48 +1,43 @@
 # Handoff: состояние проекта и история изменений
 
 Этот файл — инструкция для следующего агента. Описывает текущее состояние
-бота, что было сделано, известные баги и что ещё не готово.
+бота, архитектуру, деплой и что **нельзя ломать**.
 
 ---
 
-## Текущее состояние (на 26.06.2026)
+## Текущее состояние (на 29.06.2026)
+
+### Два независимых режима
+
+| Режим | Назначение | Точка входа | Cron на сервере |
+|-------|------------|-------------|-----------------|
+| **Канал** | Пост в @prdsvac (продуктовый дизайнер) | `python -m bot.run_once fetch` | `0 10 * * *` |
+| **Подписчики** | Личные дайджесты по роли | `python -m bot.run_once subscribers` | `2 10 * * *` |
+| **Чат UI** | `/start`, выбор роли, `/stop` | `python -m bot.chat_main` | watchdog `*/5 * * * *` |
+
+**КРИТИЧНО:** логику канала (`service.py`, `run_once fetch`, парсеры канала)
+**не менять** без явного запроса. Подписчики — отдельный слой (`subscriber_*`,
+`chat_main.py`, таблицы `subscribers` / `subscriber_sent`).
 
 ### Где запущен
 
-Бот развёрнут на хостинге **reg.ru** (ISPmanager) у пользователя `u3452280`:
+Хостинг **reg.ru** (ISPmanager), пользователь `u3452280`:
 
 ```
 /var/www/u3452280/data/vacancy-bot/
 ```
 
-Cron запускает публикацию **каждый день в 12:00 МСК**:
-```
-0 12 * * *   cd /var/www/u3452280/data/vacancy-bot && .venv/bin/python -m bot.run_once fetch
-```
-
-Python на сервере — **3.8.6**. Бот совместим через `backports.zoneinfo`.
+Python **3.8.6** — нужен `backports.zoneinfo` (см. `requirements.txt`).
 
 ### GitHub Actions
 
-Расписание в `.github/workflows/daily-vacancies.yml` **отключено** — оставлен
-только `workflow_dispatch` для ручного запуска. Это сделано намеренно, чтобы
-GitHub и сервер не постили параллельно (у них разные SQLite базы).
+Расписание **отключено** — только `workflow_dispatch`. Канал и подписчики
+живут на ISPmanager, не на GitHub.
 
 ### HH.ru API
 
-Токен приложения получен и прописан в `.env` на сервере и локально.
-Источник: dev.hh.ru, grant_type=client_credentials.
-Токен не имеет срока истечения в ответе. Если вдруг снова появится 403 —
-перевыпустить командой:
-
-```bash
-curl -s -X POST "https://hh.ru/oauth/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -H "User-Agent: ProductDesignerVacancyBot/1.0 (kotvlad2016@gmail.com)" \
-  -d "grant_type=client_credentials&client_id=CLIENT_ID&client_secret=CLIENT_SECRET"
-```
-
-Client ID и Client Secret хранятся в личном кабинете dev.hh.ru.
+`HH_ACCESS_TOKEN` в `.env` на сервере. При `403` — перевыпустить через
+`client_credentials` (см. `deploy/isp/README.md` или историю ниже).
 
 ---
 
@@ -50,115 +45,168 @@ Client ID и Client Secret хранятся в личном кабинете dev
 
 ```
 bot/
-  run_once.py      — точка входа для cron/GitHub Actions
-  main.py          — точка входа для long-polling режима (не используется на хостинге)
-  service.py       — оркестрация: collect → filter_new → filter_fresh → dedupe → send → save
-  database.py      — SQLite: таблицы vacancies + run_log
-  dates.py         — утилиты дат, is_fresh(), dedupe_key(), parse_russian_date()
-  config.py        — Settings.from_env(), список регионов HH и поисковых запросов
-  filters.py       — фильтр «продуктовый дизайнер» по ключевым словам
-  formatters.py    — форматирование HTML-сообщений для Telegram
-  parsers/
-    hh.py          — HH.ru REST API (Bearer token, date_from/date_to)
-    habr.py        — Habr Career (scraping)
-    geekjob.py     — GeekJob JSON API
-    getmatch.py    — GetMatch API
-    remotejob.py   — Remote-job.ru (scraping)
-    base.py        — BaseParser
+  run_once.py           — cron: fetch | subscribers | test | status
+  chat_main.py          — polling для подписок (/start, кнопки)
+  main.py               — legacy admin-бот (НЕ используется на проде)
+
+  service.py            — КАНАЛ: collect → filter → post → save
+  subscriber_service.py — ПОДПИСЧИКИ: collect по роли → DM каждому
+  subscriber_collect.py — парсинг HH/Habr/GeekJob/GetMatch по роли
+  subscriber_formatters.py — HTML для личных дайджестов (без футера канала)
+
+  roles.py              — MVP-роли: product_designer, frontend, backend
+  role_filters.py       — regex-фильтры для frontend/backend
+  filters.py            — фильтр product designer (только для канала)
+
+  database.py           — SQLite: vacancies, run_log, subscribers, subscriber_sent
+  formatters.py         — HTML для канала (+ футер @prdsvac)
+
+  parsers/              — парсеры канала (product designer only)
 data/
-  vacancies.db     — SQLite база (на сервере живёт постоянно)
+  vacancies.db          — общая БД (канал + подписчики, разные таблицы)
+logs/
+  chat-bot.log          — лог chat_main
+  chat-bot.pid          — lock от двойного запуска
+deploy/isp/
+  watchdog.sh           — перезапуск chat_main если упал
+  README.md             — инструкция деплоя подписчиков
 ```
 
-### Логика одного прогона (run_once.py → service.py)
+### Канал (не трогать)
 
-1. `should_run_scheduled_fetch` — при запуске по расписанию проверяет:
-   - дата не в `SCHEDULE_SKIP_DATES`
-   - успешной публикации сегодня ещё не было (`has_successful_post_today`)
-   - текущий час ≥ 12 по `TIMEZONE` (верхней границы нет — GitHub часто запаздывает)
-2. `collect_all` — параллельный обход всех 5 парсеров
-3. `filter_new` — отсекает `uid` уже в базе + дубли по `dedupe_key(title+company)`
-4. `filter_fresh` — отсекает вакансии без даты или старше `MAX_VACANCY_AGE_HOURS` (72 ч)
-5. `dedupe_by_title_company` — финальная дедупликация внутри текущей выборки
-6. `_send_combined` — форматирует и отправляет 1..N сообщений в Telegram
-7. Сохраняет в базу **только опубликованные** вакансии (не все собранные!)
+1. `collect_all` — HH, Habr, GeekJob, GetMatch с фильтром product designer
+2. `filter_new` / `filter_fresh` / dedupe
+3. Пост в `TELEGRAM_CHAT_ID`
+4. В базу `vacancies` пишутся **только опубликованные** (не все спарсенные)
 
-**Важно: п.7 — намеренное ограничение.** Если сохранять все собранные (включая
-без даты), вакансии remote-job.ru без `published_at` навсегда блокировались бы
-дедупом когда позже получали дату. База = «уже в канале», не «всё виденное».
+### Подписчики (MVP)
+
+1. Пользователь: `/start` → inline-кнопка роли → `subscribers` table
+2. Cron `subscribers`: для каждой роли с подписчиками — `collect_for_role`
+3. Per-user dedup через `subscriber_sent` (отдельно от канала!)
+4. Если новых вакансий 0 — **сообщение не отправляется** (тишина)
+5. GetMatch только для `product_designer`
+
+### Роли MVP
+
+| id | label | GetMatch |
+|----|-------|----------|
+| `product_designer` | продуктового дизайнера | да |
+| `frontend` | frontend-разработчика | нет |
+| `backend` | backend-разработчика | нет |
+
+Расширение на fullstack, QA, PM и т.д. — добавить в `roles.py` + `role_filters.py`.
+
+---
+
+## Cron на ISPmanager (актуальный)
+
+```
+# Канал — 10:00 МСК (НЕ МЕНЯТЬ без запроса пользователя)
+0 10 * * *  cd /var/www/u3452280/data/vacancy-bot && PYTHONIOENCODING=utf-8 .venv/bin/python -m bot.run_once fetch
+
+# Подписчики — 10:02 МСК (через 2 мин после канала)
+2 10 * * *  cd /var/www/u3452280/data/vacancy-bot && PYTHONIOENCODING=utf-8 .venv/bin/python -m bot.run_once subscribers
+
+# Watchdog chat_main — каждые 5 мин
+*/5 * * * * bash /var/www/u3452280/data/vacancy-bot/deploy/isp/watchdog.sh
+```
+
+Cron-строки вводятся **в UI ISPmanager**, не в терминал.
+
+---
+
+## Команды для пользователей (chat_main)
+
+| Команда | Действие |
+|---------|----------|
+| `/start` | Выбор роли (inline-кнопки) |
+| `/myrole` | Текущая подписка |
+| `/stop` | Отписаться |
+
+Пользователь **обязан** написать `/start` первым — иначе Telegram не даст
+слать сообщения в личку.
+
+---
+
+## Диагностика на сервере
+
+```bash
+cd /var/www/u3452280/data/vacancy-bot
+
+# Канал вручную
+PYTHONIOENCODING=utf-8 .venv/bin/python -m bot.run_once fetch
+
+# Подписчики вручную
+PYTHONIOENCODING=utf-8 .venv/bin/python -m bot.run_once subscribers
+
+# Список подписчиков
+.venv/bin/python -c "
+from bot.config import Settings
+from bot.database import VacancyDatabase
+print(VacancyDatabase(Settings.from_env().db_path).list_active_subscribers())
+"
+
+# Чат-бот запущен?
+ps aux | grep chat_main
+
+# Логи чат-бота
+tail -30 logs/chat-bot.log
+```
 
 ---
 
 ## Исправленные баги (история)
 
-### 1. Вечная блокировка вакансий без даты (регрессия)
-**Файл:** `bot/service.py`  
-**Баг:** Ранее сохранялись все собранные вакансии, включая без даты. Новый
-дедуп по `title+company` навсегда блокировал их, когда позже появлялась дата.  
-**Фикс:** Сохранять только `to_post` (опубликованные), не весь `vacancies`.
+### Канал
 
-### 2. Хрупкий разбор даты в GetMatch
-**Файл:** `bot/parsers/getmatch.py`  
-**Баг:** `datetime.fromisoformat()` бросал исключение на нестандартном формате →
-весь источник падал с потерей всех вакансий.  
-**Фикс:** Заменить на `parse_iso_datetime()` из `bot/dates.py` (возвращает `None`).
+1. **Вечная блокировка вакансий без даты** — сохранять только опубликованные
+2. **GetMatch date parse** — `parse_iso_datetime` вместо `fromisoformat`
+3. **URL не экранирован** — `escape_html` в href
+4. **GitHub cron задержки** — переезд на ISPmanager
+5. **TelegramNetworkError** — retry в `_safe_send`
+6. **Python 3.8** — `backports.zoneinfo`
+7. **remote-job.ru удалён** — дублировал HH
 
-### 3. Неэкранированный URL в HTML-сообщении
-**Файл:** `bot/formatters.py`  
-**Баг:** `<a href="{url}">` — `&` в URL ломал Telegram HTML-парсер → сообщение
-не отправлялось → прогон падал с ошибкой → вакансии не сохранялись → репост.  
-**Фикс:** `escape_html(vacancy.url)` в атрибуте href.
+### Подписчики (29.06.2026)
 
-### 4. GitHub Actions пропускал публикацию из-за задержки cron
-**Файл:** `bot/run_once.py`, `.github/workflows/daily-vacancies.yml`  
-**Баг:** GitHub запускал cron с задержкой до нескольких часов. Код проверял
-`hour > 14` → «окно закрыто» → пост терялся.  
-**Фикс:** Убрана верхняя граница окна. Добавлен почасовой фолбэк в расписании.
-Затем GitHub Actions полностью переведён на ручной запуск после переезда на хостинг.
-
-### 5. TelegramNetworkError не ретраился
-**Файл:** `bot/service.py`, метод `_safe_send`  
-**Баг:** Ловился только `TelegramRetryAfter`. Таймаут сети падал без повтора.  
-**Фикс:** Добавлен retry до 3 раз с паузами 10/20/30 сек на `TelegramNetworkError`.
-
-### 6. Python 3.8 несовместимость
-**Файл:** `requirements.txt`, `bot/database.py`, `bot/main.py`, `bot/run_once.py`  
-**Баг:** `from zoneinfo import ZoneInfo` — только Python 3.9+. Сервер на 3.8.6.  
-**Фикс:** `try/except ImportError` с `backports.zoneinfo`. Добавлен
-`backports.zoneinfo; python_version < "3.9"` в requirements.txt.
+1. **watchdog + pgrep** — на reg.ru `pgrep` не находил процесс; заменено на `ps aux | grep chat_main`
+2. **Двойной chat_main** — pid-file lock в `chat_main.py`
+3. **Смена роли** — при смене роли очищается `subscriber_sent` для пользователя
+4. **Пустая рассылка** — если новых вакансий 0, DM не отправляется (в отличие от канала)
+5. **Flood** — пауза 50 ms между подписчиками
 
 ---
 
 ## Известные ограничения
 
-### Remote-job.ru: большинство вакансий без даты
-~80 вакансий с remote-job.ru обычно не имеют `published_at` → все отсекаются
-фильтром `is_fresh`. Это ожидаемое поведение. Если хочется включать их —
-нужно доработать парсер `bot/parsers/remotejob.py` для более точного извлечения
-дат из HTML, либо считать вакансии без даты «свежими» (рискованно — можно
-получить старьё). Пока не реализовано.
-
-### HH.ru: токен требует периодического обновления
-Токен типа `client_credentials` теоретически бессрочный, но HH может его
-инвалидировать. При появлении `403` в логах — перевыпустить (см. выше).
+- **Канал и подписчики** используют одну SQLite БД, но разные таблицы дедупа.
+  WAL включён (`PRAGMA journal_mode=WAL`).
+- **GetMatch** не подходит для dev-ролей (specialization=design).
+- **Фильтры frontend/backend** — эвристика по title, возможны false positive/negative.
+- **shared hosting** — `chat_main` может падать; watchdog перезапускает каждые 5 мин.
+- **Повторный ручной `subscribers`** после успешной рассылки — новых DM не будет
+  (вакансии уже в `subscriber_sent`). Это нормально.
 
 ---
 
-## Обновление бота на сервере
+## Обновление на сервере
 
 ```bash
 cd /var/www/u3452280/data/vacancy-bot
 git pull
-.venv/bin/pip install -r requirements.txt  # только если менялся requirements.txt
+.venv/bin/pip install -r requirements.txt   # если менялся requirements.txt
+
+# Перезапуск chat_main после обновления
+pkill -f bot.chat_main || true
+nohup .venv/bin/python -m bot.chat_main >> logs/chat-bot.log 2>&1 &
 ```
 
-## Ручной тестовый запуск на сервере
+---
 
-```bash
-cd /var/www/u3452280/data/vacancy-bot && PYTHONIOENCODING=utf-8 .venv/bin/python -m bot.run_once fetch
-```
+## Что можно делать дальше (не реализовано)
 
-## Проверить состояние базы
-
-```bash
-cd /var/www/u3452280/data/vacancy-bot && PYTHONIOENCODING=utf-8 .venv/bin/python -m bot.run_once status
-```
+- Роли: fullstack, graphic designer, QA, product manager
+- `/settings` с inline-сменой роли без повторного текста
+- Webhook вместо polling (если появится HTTPS endpoint)
+- Не слать product_designer подписчикам то, что уже ушло в канал (опционально)

@@ -43,8 +43,15 @@ nohup .venv/bin/python -m bot.chat_main >> logs/chat-bot.log 2>&1 &
 ## 5. Проверка
 
 - Напиши боту `/start` в личку → выбери роль
-- Ручная рассылка: `python -m bot.run_once subscribers`
+- Ручная рассылка: `PYTHONIOENCODING=utf-8 .venv/bin/python -m bot.run_once subscribers`
 - Логи чат-бота: `tail -f logs/chat-bot.log`
+- Проверить процесс: `ps aux | grep chat_main` (не `pgrep` — на reg.ru может не работать)
+
+## Поведение рассылки
+
+- Если **есть новые** вакансии за 72 ч — DM с дайджestом
+- Если **новых нет** — сообщение **не отправляется** (тишина)
+- Повторный ручной запуск после успешной рассылки — снова тишина (норма)
 
 ## Команды бота для пользователей
 

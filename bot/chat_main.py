@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import sys
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -22,6 +25,24 @@ from bot.roles import MVP_ROLE_IDS, ROLES
 
 logger = logging.getLogger(__name__)
 router = Router()
+PID_FILE = Path(__file__).resolve().parent.parent / "logs" / "chat-bot.pid"
+
+
+def _acquire_single_instance() -> None:
+    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if PID_FILE.exists():
+        try:
+            old_pid = int(PID_FILE.read_text().strip())
+            os.kill(old_pid, 0)
+            logger.error("Чат-бот уже запущен (pid=%s). Выход.", old_pid)
+            sys.exit(1)
+        except (OSError, ValueError):
+            PID_FILE.unlink(missing_ok=True)
+    PID_FILE.write_text(str(os.getpid()))
+
+
+def _release_single_instance() -> None:
+    PID_FILE.unlink(missing_ok=True)
 
 
 class InjectMiddleware:
@@ -125,6 +146,8 @@ async def main() -> None:
     db = VacancyDatabase(settings.db_path)
     bot = Bot(token=settings.telegram_bot_token)
 
+    _acquire_single_instance()
+
     dp = Dispatcher()
     dp.update.middleware(InjectMiddleware(db=db))
     dp.include_router(router)
@@ -133,6 +156,7 @@ async def main() -> None:
     try:
         await dp.start_polling(bot)
     finally:
+        _release_single_instance()
         await bot.session.close()
 
 

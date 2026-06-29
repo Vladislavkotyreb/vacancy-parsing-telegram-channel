@@ -59,6 +59,7 @@ class SubscriberService:
                 try:
                     sent = await self._send_to_user(user_id, role, fresh, len(vacancies))
                     total_messages += sent
+                    await asyncio.sleep(0.05)
                 except TelegramForbiddenError:
                     logger.warning("Подписчик %s заблокировал бота — отписываем", user_id)
                     self.db.deactivate_subscriber(user_id)
@@ -100,6 +101,14 @@ class SubscriberService:
             total_found,
             self.settings.max_vacancy_age_hours,
         )
+
+        if included == 0:
+            logger.info(
+                "Подписчик %s [%s]: новых вакансий нет — сообщение не отправляем",
+                user_id,
+                role.id,
+            )
+            return 0
 
         for message in messages:
             await self._safe_send(user_id, message)
