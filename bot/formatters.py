@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bot.grades import extract_grade
 from bot.models import Vacancy
 
 SOURCE_LABELS = {
@@ -18,8 +19,14 @@ def format_vacancy(vacancy: Vacancy) -> str:
     source = SOURCE_LABELS.get(vacancy.source, vacancy.source)
     lines = [
         f"🎨 <b>{escape_html(vacancy.title)}</b>",
-        f"🏢 {escape_html(vacancy.company)}",
     ]
+
+    if grade := extract_grade(vacancy.title):
+        lines.append(f"📊 {escape_html(grade)}")
+
+    lines.extend([
+        f"🏢 {escape_html(vacancy.company)}",
+    ])
 
     if vacancy.salary:
         lines.append(f"💰 {escape_html(vacancy.salary)}")
@@ -52,15 +59,18 @@ def format_continuation_header(part: int, total_parts: int) -> str:
     return f"✨ <b>Продолжение</b> ({part}/{total_parts})"
 
 
-def format_combined_digest(
-    new_vacancies: list[Vacancy], total_found: int, max_age_hours: int = 72
+def build_paginated_digest(
+    header: str,
+    new_vacancies: list[Vacancy],
+    *,
+    channel_footer: bool = False,
 ) -> tuple[list[str], int]:
     """Собирает вакансии в одно или несколько сообщений. Возвращает (тексты, число включённых)."""
     if not new_vacancies:
-        return [format_digest_header(0, total_found, max_age_hours)], 0
+        return [header], 0
 
     messages: list[str] = []
-    parts = [format_digest_header(len(new_vacancies), total_found, max_age_hours)]
+    parts = [header]
     included = 0
 
     for vacancy in new_vacancies:
@@ -88,11 +98,23 @@ def format_combined_digest(
             for index, message in enumerate(messages[1:], start=2)
         ]
 
-    # Футер с упоминанием канала добавляется только в последнее сообщение
-    if messages:
+    if messages and channel_footer:
         messages[-1] += CHANNEL_FOOTER
 
     return messages, included
+
+
+def format_combined_digest(
+    new_vacancies: list[Vacancy], total_found: int, max_age_hours: int = 72
+) -> tuple[list[str], int]:
+    if not new_vacancies:
+        return [format_digest_header(0, total_found, max_age_hours)], 0
+
+    return build_paginated_digest(
+        format_digest_header(len(new_vacancies), total_found, max_age_hours),
+        new_vacancies,
+        channel_footer=True,
+    )
 
 
 def escape_html(text: str) -> str:

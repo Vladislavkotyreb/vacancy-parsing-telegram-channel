@@ -71,4 +71,6 @@ SEARCH_QUERIES = [
     "product design",
     "продуктовый ux",
     "product ux designer",
+    "ux ui designer",
+    "UX UI дизайнер",
 ]

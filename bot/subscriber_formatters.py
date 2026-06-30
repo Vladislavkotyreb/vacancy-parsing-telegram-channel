@@ -2,11 +2,8 @@ from __future__ import annotations
 
 from bot.models import Vacancy
 from bot.formatters import (
-    SEPARATOR,
-    TELEGRAM_MAX_LENGTH,
+    build_paginated_digest,
     escape_html,
-    format_continuation_header,
-    format_vacancy,
 )
 
 SOURCE_LABELS = {
@@ -42,33 +39,8 @@ def format_subscriber_digest(
     if not new_vacancies:
         return [format_subscriber_header(role_label, 0, total_found, max_age_hours)], 0
 
-    messages: list[str] = []
-    parts = [format_subscriber_header(role_label, len(new_vacancies), total_found, max_age_hours)]
-    included = 0
-
-    for vacancy in new_vacancies:
-        block = format_vacancy(vacancy)
-        if len(SEPARATOR.join(parts + [block])) <= TELEGRAM_MAX_LENGTH:
-            parts.append(block)
-            included += 1
-            continue
-
-        if parts:
-            messages.append(SEPARATOR.join(parts))
-
-        parts = [block]
-        if len(parts[0]) > TELEGRAM_MAX_LENGTH:
-            parts = [parts[0][: TELEGRAM_MAX_LENGTH - 1] + "…"]
-        included += 1
-
-    if parts:
-        messages.append(SEPARATOR.join(parts))
-
-    if len(messages) > 1:
-        total_parts = len(messages)
-        messages[1:] = [
-            format_continuation_header(index, total_parts) + SEPARATOR + message
-            for index, message in enumerate(messages[1:], start=2)
-        ]
-
-    return messages, included
+    return build_paginated_digest(
+        format_subscriber_header(role_label, len(new_vacancies), total_found, max_age_hours),
+        new_vacancies,
+        channel_footer=False,
+    )
