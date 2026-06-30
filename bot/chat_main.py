@@ -36,7 +36,8 @@ PID_FILE = Path(__file__).resolve().parent.parent / "logs" / "chat-bot.pid"
 
 BTN_MY_SUBSCRIPTION = "Мои вакансии"
 BTN_UNSUBSCRIBE = "Прекратить рассылку"
-BTN_CHOOSE_ROLES = "Выбрать роли заново"
+BTN_CHOOSE_ROLES = "Выбрать роли"
+BTN_CHOOSE_ROLES_AGAIN = "Выбрать роли заново"
 
 CALLBACK_CATEGORY_PREFIX = "cat:"
 CALLBACK_TOGGLE_PREFIX = "toggle:"
@@ -79,12 +80,21 @@ class InjectMiddleware:
         return await handler(event, data)
 
 
-def main_menu_keyboard() -> ReplyKeyboardMarkup:
+def _is_subscribed(user_id: int, db: VacancyDatabase) -> bool:
+    subscriber = db.get_subscriber(user_id)
+    return bool(subscriber and subscriber.get("roles"))
+
+
+def _choose_roles_button(subscribed: bool) -> str:
+    return BTN_CHOOSE_ROLES_AGAIN if subscribed else BTN_CHOOSE_ROLES
+
+
+def main_menu_keyboard(subscribed: bool = False) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_MY_SUBSCRIPTION)],
             [KeyboardButton(text=BTN_UNSUBSCRIBE)],
-            [KeyboardButton(text=BTN_CHOOSE_ROLES)],
+            [KeyboardButton(text=_choose_roles_button(subscribed))],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -139,14 +149,14 @@ def _roles_step_text(category_id: str, selected: set[str]) -> str:
     )
 
 
-async def send_welcome(message: Message) -> None:
+async def send_welcome(message: Message, subscribed: bool = False) -> None:
     await message.answer(
         "Привет! Выбери направление — каждый день в <b>10:00 (МСК)</b> "
         "я буду присылать новые вакансии в личку.\n\n"
         "Можно выбрать несколько ролей внутри направления.\n"
         "Источники: HeadHunter, Habr Career, GeekJob, GetMatch (для дизайнеров).",
         parse_mode="HTML",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=main_menu_keyboard(subscribed),
     )
 
 
@@ -178,18 +188,18 @@ async def send_subscription_info(message: Message, db: VacancyDatabase) -> None:
     subscriber = db.get_subscriber(message.from_user.id)
     if not subscriber or not subscriber.get("roles"):
         await message.answer(
-            "Ты пока не подписан.\nНажми «Выбрать роли заново» и пройди настройку.",
-            reply_markup=main_menu_keyboard(),
+            f"Ты пока не подписан.\nНажми «{BTN_CHOOSE_ROLES}» и пройди настройку.",
+            reply_markup=main_menu_keyboard(subscribed=False),
         )
         return
 
     roles_text = format_subscription_roles(subscriber["roles"])
     await message.answer(
         f"Текущая подписка: <b>{roles_text}</b>\n"
-        "Изменить роли — «Выбрать роли заново»\n"
+        f"Изменить роли — «{BTN_CHOOSE_ROLES_AGAIN}»\n"
         "Отписаться — «Прекратить рассылку»",
         parse_mode="HTML",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=main_menu_keyboard(subscribed=True),
     )
 
 
@@ -202,24 +212,27 @@ async def unsubscribe_user(message: Message, db: VacancyDatabase, state: FSMCont
     if not subscriber:
         await message.answer(
             "Ты не подписан на рассылку.",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=main_menu_keyboard(subscribed=False),
         )
         return
 
     db.deactivate_subscriber(message.from_user.id)
     await message.answer(
-        "Рассылка остановлена.\nЧтобы вернуться — «Выбрать роли заново».",
-        reply_markup=main_menu_keyboard(),
+        f"Рассылка остановлена.\nЧтобы вернуться — «{BTN_CHOOSE_ROLES}».",
+        reply_markup=main_menu_keyboard(subscribed=False),
     )
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message, state: FSMContext) -> None:
-    await send_welcome(message)
+async def cmd_start(message: Message, state: FSMContext, db: VacancyDatabase) -> None:
+    subscribed = (
+        _is_subscribed(message.from_user.id, db) if message.from_user else False
+    )
+    await send_welcome(message, subscribed)
     await send_category_picker(message, state)
 
 
-@router.message(F.text == BTN_CHOOSE_ROLES)
+@router.message(F.text.in_({BTN_CHOOSE_ROLES, BTN_CHOOSE_ROLES_AGAIN}))
 async def btn_choose_roles(message: Message, state: FSMContext) -> None:
     await send_category_picker(message, state)
 
@@ -331,15 +344,18 @@ async def on_roles_confirmed(callback: CallbackQuery, state: FSMContext, db: Vac
         )
         await callback.message.answer(
             "Меню управления подпиской — кнопки ниже 👇",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=main_menu_keyboard(subscribed=True),
         )
 
 
 @router.message()
-async def fallback(message: Message) -> None:
+async def fallback(message: Message, db: VacancyDatabase) -> None:
+    subscribed = (
+        _is_subscribed(message.from_user.id, db) if message.from_user else False
+    )
     await message.answer(
         "Используй кнопки меню 👇",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=main_menu_keyboard(subscribed),
     )
 
 
