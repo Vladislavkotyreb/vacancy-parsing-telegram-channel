@@ -42,6 +42,7 @@ BTN_CHOOSE_ROLES_AGAIN = "Выбрать роли заново"
 CALLBACK_CATEGORY_PREFIX = "cat:"
 CALLBACK_TOGGLE_PREFIX = "toggle:"
 CALLBACK_CONTINUE = "roles:continue"
+CALLBACK_BACK = "roles:back"
 
 
 class SubscribeFlow(StatesGroup):
@@ -129,23 +130,66 @@ def roles_inline_keyboard(category_id: str, selected: set[str]) -> InlineKeyboar
                 )
             ]
         )
-    rows.append([InlineKeyboardButton(text="Продолжить", callback_data=CALLBACK_CONTINUE)])
+    rows.append(
+        [
+            InlineKeyboardButton(text="← Назад", callback_data=CALLBACK_BACK),
+            InlineKeyboardButton(text="Продолжить", callback_data=CALLBACK_CONTINUE),
+        ]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _roles_step_text(category_id: str, selected: set[str]) -> str:
+def _roles_step_text(
+    category_id: str, selected: set[str], saved_roles: list[str] | None = None
+) -> str:
     category = get_category(category_id)
     title = category.title if category else category_id
+
     if selected:
-        chosen = format_subscription_roles(sorted(selected))
-        return (
-            f"<b>{title}</b> — выбери одну или несколько ролей.\n"
-            f"Выбрано: {chosen}\n\n"
-            "Нажми на роль, чтобы отметить или снять. Затем — «Продолжить»."
-        )
-    return (
-        f"<b>{title}</b> — выбери одну или несколько ролей.\n\n"
-        "Нажми на роль, чтобы отметить или снять. Затем — «Продолжить»."
+        current = format_subscription_roles(sorted(selected))
+        current_line = f"Сейчас отмечено: <b>{current}</b>"
+    else:
+        current_line = "Сейчас отмечено: <i>ничего</i>"
+
+    lines = [
+        f"<b>{title}</b> — шаг 2 из 2",
+        current_line,
+    ]
+
+    if saved_roles:
+        lines.append(f"В подписке: <b>{format_subscription_roles(saved_roles)}</b>")
+
+    lines.extend(
+        [
+            "",
+            "Нажми на роль, чтобы отметить или снять.",
+            "«Продолжить» — сохранить · «Назад» — к выбору направления.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+async def _show_category_picker(message: Message, state: FSMContext) -> None:
+    await state.set_state(SubscribeFlow.picking_category)
+    await message.edit_text(
+        "Шаг 1 из 2 — выбери направление:",
+        reply_markup=category_inline_keyboard(),
+    )
+
+
+async def _show_roles_picker(
+    message: Message,
+    state: FSMContext,
+    category_id: str,
+    selected: set[str],
+    saved_roles: list[str],
+) -> None:
+    await state.set_state(SubscribeFlow.picking_roles)
+    await state.update_data(category_id=category_id, selected_roles=sorted(selected))
+    await message.edit_text(
+        _roles_step_text(category_id, selected, saved_roles),
+        parse_mode="HTML",
+        reply_markup=roles_inline_keyboard(category_id, selected),
     )
 
 
@@ -166,18 +210,6 @@ async def send_category_picker(message: Message, state: FSMContext) -> None:
     await message.answer(
         "Шаг 1 из 2 — выбери направление:",
         reply_markup=category_inline_keyboard(),
-    )
-
-
-async def send_roles_picker(message: Message, state: FSMContext, category_id: str) -> None:
-    data = await state.get_data()
-    selected = set(data.get("selected_roles") or [])
-    await state.set_state(SubscribeFlow.picking_roles)
-    await state.update_data(category_id=category_id)
-    await message.answer(
-        _roles_step_text(category_id, selected),
-        parse_mode="HTML",
-        reply_markup=roles_inline_keyboard(category_id, selected),
     )
 
 
@@ -271,18 +303,34 @@ async def on_category_selected(
         return
 
     preselected: list[str] = []
+    saved_roles: list[str] = []
     if callback.from_user:
-        existing = db.get_subscriber_roles(callback.from_user.id)
-        preselected = [role_id for role_id in existing if role_id in category.role_ids]
+        saved_roles = db.get_subscriber_roles(callback.from_user.id)
+        preselected = [role_id for role_id in saved_roles if role_id in category.role_ids]
 
     await state.update_data(selected_roles=preselected)
     await callback.answer()
     if callback.message:
-        await send_roles_picker(callback.message, state, category_id)
+        await _show_roles_picker(
+            callback.message,
+            state,
+            category_id,
+            set(preselected),
+            saved_roles,
+        )
+
+
+@router.callback_query(F.data == CALLBACK_BACK)
+async def on_roles_back(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    if callback.message:
+        await _show_category_picker(callback.message, state)
 
 
 @router.callback_query(F.data.startswith(CALLBACK_TOGGLE_PREFIX))
-async def on_role_toggled(callback: CallbackQuery, state: FSMContext) -> None:
+async def on_role_toggled(
+    callback: CallbackQuery, state: FSMContext, db: VacancyDatabase
+) -> None:
     if not callback.data:
         return
 
@@ -306,9 +354,13 @@ async def on_role_toggled(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(selected_roles=sorted(selected))
     await callback.answer()
 
+    saved_roles: list[str] = []
+    if callback.from_user:
+        saved_roles = db.get_subscriber_roles(callback.from_user.id)
+
     if callback.message:
         await callback.message.edit_text(
-            _roles_step_text(category_id, selected),
+            _roles_step_text(category_id, selected, saved_roles),
             parse_mode="HTML",
             reply_markup=roles_inline_keyboard(category_id, selected),
         )
