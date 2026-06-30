@@ -152,16 +152,19 @@ def vacancy_keyboard(category_id: str, draft: set[str]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _specialty_step_text(saved_roles: list[str]) -> str:
-    lines = ["<b>Шаг 1 из 2</b> — специальность", "Нажми на направление:"]
-    if saved_roles:
-        lines.append(f"В подписке: <b>{format_subscription_roles(saved_roles)}</b>")
-    return "\n".join(lines)
+def _specialty_step_text() -> str:
+    return "\n".join(
+        [
+            "<b>Шаг 1 из 2</b> — специальность",
+            "Нажми на направление:",
+        ]
+    )
 
 
 def _vacancy_step_text(category_id: str, draft: set[str], saved_roles: list[str]) -> str:
     category = get_category(category_id)
     title = category.title if category else category_id
+    category_saved = _saved_roles_for_category(saved_roles, category_id)
 
     if draft:
         picked = f"Сейчас отмечено: <b>{format_subscription_roles(sorted(draft))}</b>"
@@ -172,25 +175,27 @@ def _vacancy_step_text(category_id: str, draft: set[str], saved_roles: list[str]
         f"<b>Шаг 2 из 2</b> — вакансии ({title})",
         picked,
     ]
-    if saved_roles:
-        lines.append(f"В подписке: <b>{format_subscription_roles(saved_roles)}</b>")
+    if category_saved:
+        lines.append(
+            f"Уже в подписке ({title}): "
+            f"<b>{format_subscription_roles(category_saved)}</b>"
+        )
     lines.extend(
         [
             "",
             "Отметь вакансии и нажми «Продолжить».",
-            "«Назад» — отменить выбор и вернуться к специальности.",
+            "Снять все галочки и «Продолжить» — убрать это направление из подписки.",
+            "«Назад» — отменить без сохранения.",
         ]
     )
     return "\n".join(lines)
 
 
-async def _show_specialty_step(
-    message: Message, state: FSMContext, saved_roles: list[str]
-) -> None:
+async def _show_specialty_step(message: Message, state: FSMContext) -> None:
     await state.set_state(SubscribeFlow.specialty)
     await state.update_data(category_id=None, draft_roles=[])
     await message.edit_text(
-        _specialty_step_text(saved_roles),
+        _specialty_step_text(),
         parse_mode="HTML",
         reply_markup=specialty_keyboard(),
     )
@@ -222,13 +227,12 @@ async def send_welcome(message: Message, subscribed: bool = False) -> None:
     )
 
 
-async def start_flow(message: Message, state: FSMContext, saved_roles: list[str] | None = None) -> None:
+async def start_flow(message: Message, state: FSMContext) -> None:
     await state.clear()
     await state.set_state(SubscribeFlow.specialty)
     await state.update_data(category_id=None, draft_roles=[])
-    roles = saved_roles or []
     await message.answer(
-        _specialty_step_text(roles),
+        _specialty_step_text(),
         parse_mode="HTML",
         reply_markup=specialty_keyboard(),
     )
@@ -280,14 +284,12 @@ async def unsubscribe_user(message: Message, db: VacancyDatabase, state: FSMCont
 async def cmd_start(message: Message, state: FSMContext, db: VacancyDatabase) -> None:
     subscribed = _is_subscribed(message.from_user.id, db) if message.from_user else False
     await send_welcome(message, subscribed)
-    saved = db.get_subscriber_roles(message.from_user.id) if message.from_user else []
-    await start_flow(message, state, saved)
+    await start_flow(message, state)
 
 
 @router.message(F.text.in_({BTN_CHOOSE_ROLES, BTN_CHOOSE_ROLES_AGAIN}))
-async def btn_choose_roles(message: Message, state: FSMContext, db: VacancyDatabase) -> None:
-    saved = db.get_subscriber_roles(message.from_user.id) if message.from_user else []
-    await start_flow(message, state, saved)
+async def btn_choose_roles(message: Message, state: FSMContext) -> None:
+    await start_flow(message, state)
 
 
 @router.message(F.text == BTN_MY_SUBSCRIPTION)
@@ -338,14 +340,12 @@ async def s2_back(callback: CallbackQuery, state: FSMContext, db: VacancyDatabas
     if not callback.message:
         return
 
-    saved_roles = db.get_subscriber_roles(callback.from_user.id) if callback.from_user else []
-
     await state.clear()
     await state.set_state(SubscribeFlow.specialty)
     await state.update_data(category_id=None, draft_roles=[])
 
     await callback.answer("Выбор отменён")
-    await _show_specialty_step(callback.message, state, saved_roles)
+    await _show_specialty_step(callback.message, state)
 
 
 @router.callback_query(F.data.startswith(S2_ROLE))
@@ -396,27 +396,49 @@ async def s2_save(callback: CallbackQuery, state: FSMContext, db: VacancyDatabas
     draft = data.get("draft_roles") or []
     category_id = data.get("category_id")
     category = get_category(category_id) if category_id else None
-
-    if not draft:
-        await callback.answer("Выбери хотя бы одну вакансию", show_alert=True)
+    if not category:
+        await callback.answer("Сначала выбери направление", show_alert=True)
         return
 
     db.replace_category_roles(
         callback.from_user.id,
-        set(category.role_ids) if category else set(),
+        set(category.role_ids),
         draft,
     )
     await state.clear()
-    await callback.answer("Подписка сохранена")
 
     all_roles = db.get_subscriber_roles(callback.from_user.id)
-    roles_text = format_success_roles(all_roles)
-    await callback.message.edit_text(
-        f"✅ Готово! Каждый день в <b>10:00 (МСК)</b> буду присылать "
-        f"<b>{roles_text}</b>.\n\n"
-        "Чтобы добавить другое направление — «Выбрать роли заново».",
-        parse_mode="HTML",
-    )
+    if not all_roles:
+        db.deactivate_subscriber(callback.from_user.id)
+        await callback.answer("Подписка отключена")
+        await callback.message.edit_text(
+            "Подписка отключена — ни одной роли не осталось.\n"
+            f"Чтобы вернуться — «{BTN_CHOOSE_ROLES}».",
+            parse_mode="HTML",
+        )
+        await callback.message.answer(
+            "Меню 👇",
+            reply_markup=main_menu_keyboard(subscribed=False),
+        )
+        return
+
+    if draft:
+        await callback.answer("Подписка сохранена")
+        roles_text = format_success_roles(all_roles)
+        await callback.message.edit_text(
+            f"✅ Готово! Каждый день в <b>10:00 (МСК)</b> буду присылать "
+            f"<b>{roles_text}</b>.\n\n"
+            "Чтобы изменить другое направление — «Выбрать роли заново».",
+            parse_mode="HTML",
+        )
+    else:
+        await callback.answer("Направление убрано из подписки")
+        await callback.message.edit_text(
+            f"✅ Направление <b>{category.title}</b> убрано из подписки.\n\n"
+            f"Активная подписка: <b>{format_subscription_roles(all_roles)}</b>",
+            parse_mode="HTML",
+        )
+
     await callback.message.answer(
         "Меню 👇",
         reply_markup=main_menu_keyboard(subscribed=True),

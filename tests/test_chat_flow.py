@@ -146,13 +146,31 @@ class FlowSimulationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_s1_goes_directly_to_step2(self):
         state = self._ctx()
-        await _show_specialty_step(self.message, state, [])
+        await _show_specialty_step(self.message, state)
         await s1_pick_specialty(self._cb(f"{S1_CAT}backend"), state, self.db)
         self.assertEqual(await state.get_state(), SubscribeFlow.vacancy.state)
         data = await state.get_data()
         self.assertEqual(data["category_id"], "backend")
         kb = self.edited_keyboards[-1]
         self.assertIn(S2_BACK, _callback_data(kb))
+
+    async def test_clear_category_roles_with_empty_save(self):
+        state = self._ctx()
+        self.db.set_subscriber_roles(
+            self.user_id,
+            ["product_designer", "backend_python", "backend_java", "backend_go"],
+        )
+        await _show_vacancy_step(
+            self.message,
+            state,
+            "backend",
+            set(),
+            self.db.get_subscriber_roles(self.user_id),
+        )
+        await s2_save(self._cb(S2_SAVE), state, self.db)
+        roles = self.db.get_subscriber_roles(self.user_id)
+        self.assertEqual(roles, ["product_designer"])
+        self.assertNotIn("backend_python", roles)
 
 
 if __name__ == "__main__":
