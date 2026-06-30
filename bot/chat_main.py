@@ -39,17 +39,15 @@ BTN_UNSUBSCRIBE = "Прекратить рассылку"
 BTN_CHOOSE_ROLES = "Выбрать роли"
 BTN_CHOOSE_ROLES_AGAIN = "Выбрать роли заново"
 
-# Отдельные префиксы для шагов — без коллизий в обработчиках.
 S1_CAT = "s1:cat:"
-S1_NEXT = "s1:next"
 S2_ROLE = "s2:role:"
 S2_SAVE = "s2:save"
 S2_BACK = "s2:back"
 
 
 class SubscribeFlow(StatesGroup):
-    direction = State()
     specialty = State()
+    vacancy = State()
 
 
 def _acquire_single_instance() -> None:
@@ -112,26 +110,21 @@ def main_menu_keyboard(subscribed: bool = False) -> ReplyKeyboardMarkup:
     )
 
 
-def direction_keyboard(direction_id: str | None) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = []
-    for category_id in CATEGORY_IDS:
-        category = CATEGORIES.get(category_id)
-        if not category:
-            continue
-        mark = "✓ " if category_id == direction_id else ""
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"{mark}{category.title}",
-                    callback_data=f"{S1_CAT}{category_id}",
-                )
-            ]
-        )
-    rows.append([InlineKeyboardButton(text="Продолжить", callback_data=S1_NEXT)])
+def specialty_keyboard() -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=CATEGORIES[category_id].title,
+                callback_data=f"{S1_CAT}{category_id}",
+            )
+        ]
+        for category_id in CATEGORY_IDS
+        if category_id in CATEGORIES
+    ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def specialty_keyboard(category_id: str, draft: set[str]) -> InlineKeyboardMarkup:
+def vacancy_keyboard(category_id: str, draft: set[str]) -> InlineKeyboardMarkup:
     category = get_category(category_id)
     if not category:
         return InlineKeyboardMarkup(inline_keyboard=[])
@@ -159,25 +152,14 @@ def specialty_keyboard(category_id: str, draft: set[str]) -> InlineKeyboardMarku
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _direction_text(direction_id: str | None, saved_roles: list[str]) -> str:
-    if direction_id:
-        category = get_category(direction_id)
-        title = category.title if category else direction_id
-        picked = f"Выбрано направление: <b>{title}</b>"
-    else:
-        picked = "Выбрано направление: <i>ничего</i>"
-
-    lines = [
-        "<b>Шаг 1 из 2</b> — выбор направления",
-        picked,
-    ]
+def _specialty_step_text(saved_roles: list[str]) -> str:
+    lines = ["<b>Шаг 1 из 2</b> — специальность", "Нажми на направление:"]
     if saved_roles:
         lines.append(f"В подписке: <b>{format_subscription_roles(saved_roles)}</b>")
-    lines.extend(["", "Выбери направление и нажми «Продолжить»."])
     return "\n".join(lines)
 
 
-def _specialty_text(category_id: str, draft: set[str], saved_roles: list[str]) -> str:
+def _vacancy_step_text(category_id: str, draft: set[str], saved_roles: list[str]) -> str:
     category = get_category(category_id)
     title = category.title if category else category_id
 
@@ -187,7 +169,7 @@ def _specialty_text(category_id: str, draft: set[str], saved_roles: list[str]) -
         picked = "Сейчас отмечено: <i>ничего</i>"
 
     lines = [
-        f"<b>Шаг 2 из 2</b> — {title}",
+        f"<b>Шаг 2 из 2</b> — вакансии ({title})",
         picked,
     ]
     if saved_roles:
@@ -195,58 +177,60 @@ def _specialty_text(category_id: str, draft: set[str], saved_roles: list[str]) -
     lines.extend(
         [
             "",
-            "Отметь специальности и нажми «Продолжить».",
-            "«Назад» — вернуться и <b>сбросить</b> текущий выбор.",
+            "Отметь вакансии и нажми «Продолжить».",
+            "«Назад» — отменить выбор и вернуться к специальности.",
         ]
     )
     return "\n".join(lines)
 
 
-async def _show_direction(
-    message: Message, state: FSMContext, direction_id: str | None, saved_roles: list[str]
+async def _show_specialty_step(
+    message: Message, state: FSMContext, saved_roles: list[str]
 ) -> None:
-    await state.set_state(SubscribeFlow.direction)
+    await state.set_state(SubscribeFlow.specialty)
+    await state.update_data(category_id=None, draft_roles=[])
     await message.edit_text(
-        _direction_text(direction_id, saved_roles),
+        _specialty_step_text(saved_roles),
         parse_mode="HTML",
-        reply_markup=direction_keyboard(direction_id),
+        reply_markup=specialty_keyboard(),
     )
 
 
-async def _show_specialty(
+async def _show_vacancy_step(
     message: Message,
     state: FSMContext,
     category_id: str,
     draft: set[str],
     saved_roles: list[str],
 ) -> None:
-    await state.set_state(SubscribeFlow.specialty)
+    await state.set_state(SubscribeFlow.vacancy)
     await state.update_data(category_id=category_id, draft_roles=sorted(draft))
     await message.edit_text(
-        _specialty_text(category_id, draft, saved_roles),
+        _vacancy_step_text(category_id, draft, saved_roles),
         parse_mode="HTML",
-        reply_markup=specialty_keyboard(category_id, draft),
+        reply_markup=vacancy_keyboard(category_id, draft),
     )
 
 
 async def send_welcome(message: Message, subscribed: bool = False) -> None:
     await message.answer(
         "Привет! Каждый день в <b>10:00 (МСК)</b> присылаю новые вакансии в личку.\n\n"
-        "Можно выбрать несколько специальностей внутри направления.\n"
+        "Сначала специальность, потом вакансии — можно несколько.\n"
         "Источники: HeadHunter, Habr Career, GeekJob, GetMatch (для дизайнеров).",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(subscribed),
     )
 
 
-async def start_flow(message: Message, state: FSMContext) -> None:
+async def start_flow(message: Message, state: FSMContext, saved_roles: list[str] | None = None) -> None:
     await state.clear()
-    await state.set_state(SubscribeFlow.direction)
-    await state.update_data(direction_id=None, category_id=None, draft_roles=[])
+    await state.set_state(SubscribeFlow.specialty)
+    await state.update_data(category_id=None, draft_roles=[])
+    roles = saved_roles or []
     await message.answer(
-        _direction_text(None, []),
+        _specialty_step_text(roles),
         parse_mode="HTML",
-        reply_markup=direction_keyboard(None),
+        reply_markup=specialty_keyboard(),
     )
 
 
@@ -296,12 +280,14 @@ async def unsubscribe_user(message: Message, db: VacancyDatabase, state: FSMCont
 async def cmd_start(message: Message, state: FSMContext, db: VacancyDatabase) -> None:
     subscribed = _is_subscribed(message.from_user.id, db) if message.from_user else False
     await send_welcome(message, subscribed)
-    await start_flow(message, state)
+    saved = db.get_subscriber_roles(message.from_user.id) if message.from_user else []
+    await start_flow(message, state, saved)
 
 
 @router.message(F.text.in_({BTN_CHOOSE_ROLES, BTN_CHOOSE_ROLES_AGAIN}))
-async def btn_choose_roles(message: Message, state: FSMContext) -> None:
-    await start_flow(message, state)
+async def btn_choose_roles(message: Message, state: FSMContext, db: VacancyDatabase) -> None:
+    saved = db.get_subscriber_roles(message.from_user.id) if message.from_user else []
+    await start_flow(message, state, saved)
 
 
 @router.message(F.text == BTN_MY_SUBSCRIPTION)
@@ -324,46 +310,28 @@ async def cmd_myrole(message: Message, db: VacancyDatabase) -> None:
     await send_subscription_info(message, db)
 
 
-# --- Шаг 1: направление ---
+# --- Шаг 1: специальность (тап → сразу шаг 2) ---
 
-@router.callback_query(F.data == S1_NEXT)
-async def s1_next(callback: CallbackQuery, state: FSMContext, db: VacancyDatabase) -> None:
-    if not callback.from_user or not callback.message:
+@router.callback_query(F.data.startswith(S1_CAT))
+async def s1_pick_specialty(
+    callback: CallbackQuery, state: FSMContext, db: VacancyDatabase
+) -> None:
+    if not callback.data or not callback.message or not callback.from_user:
         return
 
-    data = await state.get_data()
-    direction_id = data.get("direction_id")
-    if not direction_id or not get_category(direction_id):
-        await callback.answer("Сначала выбери направление", show_alert=True)
+    category_id = callback.data[len(S1_CAT) :]
+    if not get_category(category_id):
+        await callback.answer("Неизвестная специальность", show_alert=True)
         return
 
     saved_roles = db.get_subscriber_roles(callback.from_user.id)
-    draft = set(_saved_roles_for_category(saved_roles, direction_id))
+    draft = set(_saved_roles_for_category(saved_roles, category_id))
 
     await callback.answer()
-    await _show_specialty(callback.message, state, direction_id, draft, saved_roles)
+    await _show_vacancy_step(callback.message, state, category_id, draft, saved_roles)
 
 
-@router.callback_query(F.data.startswith(S1_CAT))
-async def s1_pick_direction(
-    callback: CallbackQuery, state: FSMContext, db: VacancyDatabase
-) -> None:
-    if not callback.data or not callback.message:
-        return
-
-    direction_id = callback.data[len(S1_CAT) :]
-    if not get_category(direction_id):
-        await callback.answer("Неизвестное направление", show_alert=True)
-        return
-
-    saved_roles = db.get_subscriber_roles(callback.from_user.id) if callback.from_user else []
-    await state.update_data(direction_id=direction_id)
-    await callback.answer()
-
-    await _show_direction(callback.message, state, direction_id, saved_roles)
-
-
-# --- Шаг 2: специальности ---
+# --- Шаг 2: вакансии ---
 
 @router.callback_query(F.data == S2_BACK)
 async def s2_back(callback: CallbackQuery, state: FSMContext, db: VacancyDatabase) -> None:
@@ -372,16 +340,16 @@ async def s2_back(callback: CallbackQuery, state: FSMContext, db: VacancyDatabas
 
     saved_roles = db.get_subscriber_roles(callback.from_user.id) if callback.from_user else []
 
-    # Полный сброс: направление и черновик специальностей.
-    await state.set_state(SubscribeFlow.direction)
-    await state.update_data(direction_id=None, category_id=None, draft_roles=[])
+    await state.clear()
+    await state.set_state(SubscribeFlow.specialty)
+    await state.update_data(category_id=None, draft_roles=[])
 
-    await callback.answer("Выбор сброшен")
-    await _show_direction(callback.message, state, None, saved_roles)
+    await callback.answer("Выбор отменён")
+    await _show_specialty_step(callback.message, state, saved_roles)
 
 
 @router.callback_query(F.data.startswith(S2_ROLE))
-async def s2_toggle_role(
+async def s2_toggle_vacancy(
     callback: CallbackQuery, state: FSMContext, db: VacancyDatabase
 ) -> None:
     if not callback.data or not callback.message:
@@ -395,7 +363,7 @@ async def s2_toggle_role(
     data = await state.get_data()
     category_id = data.get("category_id")
     if not category_id:
-        await callback.answer("Сначала выбери направление", show_alert=True)
+        await callback.answer("Сначала выбери специальность", show_alert=True)
         return
 
     draft = set(data.get("draft_roles") or [])
@@ -409,9 +377,9 @@ async def s2_toggle_role(
 
     saved_roles = db.get_subscriber_roles(callback.from_user.id) if callback.from_user else []
     await callback.message.edit_text(
-        _specialty_text(category_id, draft, saved_roles),
+        _vacancy_step_text(category_id, draft, saved_roles),
         parse_mode="HTML",
-        reply_markup=specialty_keyboard(category_id, draft),
+        reply_markup=vacancy_keyboard(category_id, draft),
     )
 
 
@@ -420,8 +388,8 @@ async def s2_save(callback: CallbackQuery, state: FSMContext, db: VacancyDatabas
     if not callback.from_user or not callback.message:
         return
 
-    if await state.get_state() != SubscribeFlow.specialty.state:
-        await callback.answer("Сначала выбери специальности", show_alert=True)
+    if await state.get_state() != SubscribeFlow.vacancy.state:
+        await callback.answer("Сначала выбери вакансии", show_alert=True)
         return
 
     data = await state.get_data()
@@ -430,7 +398,7 @@ async def s2_save(callback: CallbackQuery, state: FSMContext, db: VacancyDatabas
     category = get_category(category_id) if category_id else None
 
     if not draft:
-        await callback.answer("Выбери хотя бы одну специальность", show_alert=True)
+        await callback.answer("Выбери хотя бы одну вакансию", show_alert=True)
         return
 
     db.replace_category_roles(
