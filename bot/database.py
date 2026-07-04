@@ -419,25 +419,37 @@ class VacancyDatabase:
             ).fetchall()
             return [(row["role"], int(row["cnt"])) for row in rows]
 
-    def subscriber_delivery_stats(self, timezone_name: str, days: int = 7) -> dict[str, int]:
-        tz = ZoneInfo(timezone_name)
-        period_start = (
-            datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
-            - timedelta(days=days - 1)
-        ).astimezone(timezone.utc)
+    def subscriber_delivery_stats(
+        self, timezone_name: str, days: Optional[int] = None
+    ) -> dict[str, int]:
         day_start, day_end = self._day_bounds_utc(timezone_name)
 
         with self._connect() as conn:
-            period_row = conn.execute(
-                """
-                SELECT
-                    COUNT(*) AS sent_total,
-                    COUNT(DISTINCT user_id) AS users_reached
-                FROM subscriber_sent
-                WHERE sent_at >= ?
-                """,
-                (period_start.isoformat(),),
-            ).fetchone()
+            if days is None:
+                period_row = conn.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS sent_total,
+                        COUNT(DISTINCT user_id) AS users_reached
+                    FROM subscriber_sent
+                    """
+                ).fetchone()
+            else:
+                tz = ZoneInfo(timezone_name)
+                period_start = (
+                    datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+                    - timedelta(days=days - 1)
+                ).astimezone(timezone.utc)
+                period_row = conn.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS sent_total,
+                        COUNT(DISTINCT user_id) AS users_reached
+                    FROM subscriber_sent
+                    WHERE sent_at >= ?
+                    """,
+                    (period_start.isoformat(),),
+                ).fetchone()
             today_row = conn.execute(
                 """
                 SELECT
@@ -456,44 +468,63 @@ class VacancyDatabase:
             "users_today": int(today_row["users_reached"]),
         }
 
-    def subscriber_sent_by_role(self, timezone_name: str, days: int = 7) -> list[tuple[str, int]]:
-        tz = ZoneInfo(timezone_name)
-        period_start = (
-            datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
-            - timedelta(days=days - 1)
-        ).astimezone(timezone.utc)
-
+    def subscriber_sent_by_role(
+        self, timezone_name: str, days: Optional[int] = None
+    ) -> list[tuple[str, int]]:
         with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT sr.role AS role, COUNT(*) AS cnt
-                FROM subscriber_sent ss
-                JOIN subscriber_roles sr ON sr.user_id = ss.user_id
-                WHERE ss.sent_at >= ?
-                GROUP BY sr.role
-                ORDER BY cnt DESC, sr.role
-                """,
-                (period_start.isoformat(),),
-            ).fetchall()
+            if days is None:
+                rows = conn.execute(
+                    """
+                    SELECT sr.role AS role, COUNT(*) AS cnt
+                    FROM subscriber_sent ss
+                    JOIN subscriber_roles sr ON sr.user_id = ss.user_id
+                    GROUP BY sr.role
+                    ORDER BY cnt DESC, sr.role
+                    """
+                ).fetchall()
+            else:
+                tz = ZoneInfo(timezone_name)
+                period_start = (
+                    datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+                    - timedelta(days=days - 1)
+                ).astimezone(timezone.utc)
+                rows = conn.execute(
+                    """
+                    SELECT sr.role AS role, COUNT(*) AS cnt
+                    FROM subscriber_sent ss
+                    JOIN subscriber_roles sr ON sr.user_id = ss.user_id
+                    WHERE ss.sent_at >= ?
+                    GROUP BY sr.role
+                    ORDER BY cnt DESC, sr.role
+                    """,
+                    (period_start.isoformat(),),
+                ).fetchall()
             return [(row["role"], int(row["cnt"])) for row in rows]
 
-    def channel_post_stats(self, timezone_name: str, days: int = 7) -> dict[str, int | Optional[dict]]:
-        tz = ZoneInfo(timezone_name)
-        period_start = (
-            datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
-            - timedelta(days=days - 1)
-        ).astimezone(timezone.utc)
+    def channel_post_stats(
+        self, timezone_name: str, days: Optional[int] = None
+    ) -> dict[str, int | Optional[dict]]:
         day_start, day_end = self._day_bounds_utc(timezone_name)
 
         with self._connect() as conn:
-            posted_period = conn.execute(
-                """
-                SELECT COUNT(*) AS cnt
-                FROM vacancies
-                WHERE first_seen_at >= ?
-                """,
-                (period_start.isoformat(),),
-            ).fetchone()
+            if days is None:
+                posted_period = conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM vacancies"
+                ).fetchone()
+            else:
+                tz = ZoneInfo(timezone_name)
+                period_start = (
+                    datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+                    - timedelta(days=days - 1)
+                ).astimezone(timezone.utc)
+                posted_period = conn.execute(
+                    """
+                    SELECT COUNT(*) AS cnt
+                    FROM vacancies
+                    WHERE first_seen_at >= ?
+                    """,
+                    (period_start.isoformat(),),
+                ).fetchone()
             posted_today = conn.execute(
                 """
                 SELECT COUNT(*) AS cnt

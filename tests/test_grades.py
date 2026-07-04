@@ -165,6 +165,7 @@ class AdminStatsTests(unittest.TestCase):
         self.assertIn("Активных: <b>2</b>", text)
         self.assertIn("Продуктовый дизайнер", text)
         self.assertIn("Канал @prdsvac", text)
+        self.assertIn("Статистика за всё время", text)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
