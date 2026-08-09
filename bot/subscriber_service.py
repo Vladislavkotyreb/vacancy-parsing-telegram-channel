@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
 from typing import Iterable
 
 from aiogram import Bot
@@ -20,30 +21,46 @@ from bot.subscriber_formatters import format_subscriber_digest
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class DigestStats:
+    subscribers: int = 0
+    messages: int = 0
+    roles_collected: int = 0
+    # Роли, сбор которых упал. Без этого списка провал сбора снаружи неотличим
+    # от «сегодня новых вакансий нет»: и там и там подписчику не уходит DM.
+    failed_roles: list[str] = field(default_factory=list)
+
+
 class SubscriberService:
     def __init__(self, settings: Settings, db: VacancyDatabase, bot: Bot) -> None:
         self.settings = settings
         self.db = db
         self.bot = bot
 
-    async def run_daily_digests(self) -> dict[str, int]:
+    async def run_daily_digests(self) -> DigestStats:
         subscribers = self.db.list_active_subscribers()
         if not subscribers:
             logger.info("Подписчиков нет — рассылка пропущена")
-            return {"subscribers": 0, "messages": 0}
+            return DigestStats()
 
-        total_messages = 0
+        cache, failed_roles = await self._collect_roles_once(
+            self._needed_roles(subscribers)
+        )
+        stats = DigestStats(
+            subscribers=len(subscribers),
+            roles_collected=len(cache),
+            failed_roles=failed_roles,
+        )
+
         for row in subscribers:
             user_id = int(row["user_id"])
-            role_ids = row.get("roles") or []
-            if not role_ids and row.get("role"):
-                role_ids = [row["role"]]
+            role_ids = self._roles_of(row)
             if not role_ids:
                 logger.warning("Подписчик %s без ролей — пропуск", user_id)
                 continue
 
             try:
-                vacancies, fresh = await self._collect_for_roles(role_ids)
+                vacancies, fresh = self._merge_for_roles(cache, role_ids)
                 logger.info(
                     "Подписчик %s roles=%s: найдено=%s, свежих=%s",
                     user_id,
@@ -51,8 +68,9 @@ class SubscriberService:
                     len(vacancies),
                     len(fresh),
                 )
-                sent = await self._send_to_user(user_id, role_ids, fresh, len(vacancies))
-                total_messages += sent
+                stats.messages += await self._send_to_user(
+                    user_id, role_ids, fresh, len(vacancies)
+                )
                 await asyncio.sleep(0.05)
             except TelegramForbiddenError:
                 logger.warning("Подписчик %s заблокировал бота — отписываем", user_id)
@@ -60,7 +78,7 @@ class SubscriberService:
             except Exception:
                 logger.exception("Ошибка рассылки подписчику %s", user_id)
 
-        return {"subscribers": len(subscribers), "messages": total_messages}
+        return stats
 
     async def preview_digests(self) -> None:
         """Проверка без отправки: что получит каждый подписчик."""
@@ -71,16 +89,16 @@ class SubscriberService:
 
         logger.info("PREVIEW: активных подписчиков=%s", len(subscribers))
 
+        cache, _ = await self._collect_roles_once(self._needed_roles(subscribers))
+
         for row in subscribers:
             user_id = int(row["user_id"])
-            role_ids = row.get("roles") or []
-            if not role_ids and row.get("role"):
-                role_ids = [row["role"]]
+            role_ids = self._roles_of(row)
             if not role_ids:
                 logger.info("PREVIEW user=%s: роли не заданы", user_id)
                 continue
 
-            vacancies, fresh = await self._collect_for_roles(role_ids)
+            vacancies, fresh = self._merge_for_roles(cache, role_ids)
             label = format_digest_roles_label(role_ids)
             logger.info(
                 "PREVIEW user=%s roles=%s %s: собрано=%s, свежих=%s",
@@ -109,14 +127,64 @@ class SubscriberService:
                     user_id,
                 )
 
-    async def _collect_for_roles(self, role_ids: list[str]) -> tuple[list[Vacancy], list[Vacancy]]:
-        merged: dict[str, Vacancy] = {}
+    @staticmethod
+    def _roles_of(row: dict) -> list[str]:
+        """Роли подписчика: новая таблица subscriber_roles, иначе legacy-колонка."""
+        roles = row.get("roles") or []
+        if not roles and row.get("role"):
+            roles = [row["role"]]
+        return roles
+
+    def _needed_roles(self, subscribers: list[dict]) -> list[str]:
+        """Различные роли всех подписчиков, в порядке первого появления."""
+        seen: dict[str, None] = {}
+        for row in subscribers:
+            for role_id in self._roles_of(row):
+                seen.setdefault(role_id, None)
+        return list(seen)
+
+    async def _collect_roles_once(
+        self, role_ids: list[str]
+    ) -> tuple[dict[str, list[Vacancy]], list[str]]:
+        """Один сбор на роль за прогон, а не на каждого подписчика.
+
+        `collect_for_role` не зависит от пользователя — персонализация начинается
+        позже, в `_filter_new_for_user`. Поэтому подписчики с одной ролью могут
+        делить результат, и повторные обходы источников были чистой потерей.
+        """
+        cache: dict[str, list[Vacancy]] = {}
+        failed: list[str] = []
+
         for role_id in role_ids:
             role = get_role(role_id)
             if not role:
                 logger.warning("Неизвестная роль подписчиков: %s — пропуск", role_id)
                 continue
-            for vacancy in await collect_for_role(self.settings, role):
+            try:
+                vacancies = await collect_for_role(self.settings, role)
+            except Exception:
+                # Сбойный источник у одной роли не должен лишать дайджеста всех
+                # остальных подписчиков.
+                logger.exception("Не удалось собрать вакансии для роли %s", role_id)
+                failed.append(role_id)
+                cache[role_id] = []
+                continue
+            cache[role_id] = vacancies
+            logger.info("Роль %s: собрано %s вакансий", role_id, len(vacancies))
+
+        logger.info(
+            "Сбор завершён: ролей=%s, из них со сбоем=%s",
+            len(cache),
+            len(failed),
+        )
+        return cache, failed
+
+    def _merge_for_roles(
+        self, cache: dict[str, list[Vacancy]], role_ids: list[str]
+    ) -> tuple[list[Vacancy], list[Vacancy]]:
+        merged: dict[str, Vacancy] = {}
+        for role_id in role_ids:
+            for vacancy in cache.get(role_id, []):
                 merged[vacancy.uid] = vacancy
 
         vacancies = list(merged.values())

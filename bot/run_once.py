@@ -118,18 +118,25 @@ async def main() -> int:
             subscriber_service = SubscriberService(settings, db, bot)
             stats = await subscriber_service.run_daily_digests()
             logger.info(
-                "Рассылка подписчикам: получателей=%s, сообщений=%s",
-                stats["subscribers"],
-                stats["messages"],
+                "Рассылка подписчикам: получателей=%s, сообщений=%s, ролей собрано=%s, со сбоем=%s",
+                stats.subscribers,
+                stats.messages,
+                stats.roles_collected,
+                len(stats.failed_roles),
             )
             if admin_id:
-                await _notify_admin(
-                    bot,
-                    admin_id,
-                    f"✅ Рассылка подписчикам.\n"
-                    f"Активных подписчиков: {stats['subscribers']}\n"
-                    f"Отправлено сообщений: {stats['messages']}",
-                )
+                lines = [
+                    "✅ Рассылка подписчикам.",
+                    f"Активных подписчиков: {stats.subscribers}",
+                    f"Отправлено сообщений: {stats.messages}",
+                    f"Ролей собрано: {stats.roles_collected}",
+                ]
+                if stats.failed_roles:
+                    # Без этой строки сбой сбора выглядит так же, как пустой день.
+                    lines.append(
+                        f"⚠️ Не собрались роли: {', '.join(stats.failed_roles)}"
+                    )
+                await _notify_admin(bot, admin_id, "\n".join(lines))
             return 0
 
         if args.mode == "subscribers-preview":
