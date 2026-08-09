@@ -56,9 +56,13 @@ def _acquire_single_instance() -> None:
     if PID_FILE.exists():
         try:
             old_pid = int(PID_FILE.read_text().strip())
-            os.kill(old_pid, 0)
-            logger.error("Чат-бот уже запущен (pid=%s). Выход.", old_pid)
-            sys.exit(1)
+            # Свой же pid в файле — не конфликт: его мог записать скрипт запуска
+            # раньше, чем мы сюда дошли. Иначе бот принял бы себя за второй
+            # экземпляр и вышел, а watchdog никогда не поднял бы его обратно.
+            if old_pid != os.getpid():
+                os.kill(old_pid, 0)
+                logger.error("Чат-бот уже запущен (pid=%s). Выход.", old_pid)
+                sys.exit(1)
         except (OSError, ValueError):
             PID_FILE.unlink(missing_ok=True)
     PID_FILE.write_text(str(os.getpid()))
