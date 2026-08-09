@@ -13,7 +13,7 @@
 |-------|------------|-------------|-----------------|
 | **Канал** | Пост в @prdsvac (продуктовый дизайнер) | `python -m bot.run_once fetch` | `0 10 * * *` |
 | **Подписчики** | Личные дайджесты по роли | `python -m bot.run_once subscribers` | `2 10 * * *` |
-| **Чат UI** | `/start`, выбор роли, `/stop` | `python -m bot.chat_main` | watchdog `*/5 * * * *` |
+| **Чат UI** | `/start`, выбор ролей, `/stop` | `python -m bot.chat_main` | watchdog `*/5 * * * *` |
 
 **КРИТИЧНО:** логику канала (`service.py`, `run_once fetch`, парсеры канала)
 **не менять** без явного запроса. Подписчики — отдельный слой (`subscriber_*`,
@@ -45,9 +45,8 @@ Python **3.8.6** — нужен `backports.zoneinfo` (см. `requirements.txt`).
 
 ```
 bot/
-  run_once.py           — cron: fetch | subscribers | test | status
+  run_once.py           — cron: fetch | subscribers | subscribers-preview | test | status
   chat_main.py          — polling для подписок (/start, кнопки)
-  main.py               — legacy admin-бот (НЕ используется на проде)
 
   service.py            — КАНАЛ: collect → filter → post → save
   subscriber_service.py — ПОДПИСЧИКИ: collect по роли → DM каждому
@@ -85,17 +84,24 @@ deploy/isp/
 2. Cron `subscribers`: для каждой роли с подписчиками — `collect_for_role`
 3. Per-user dedup через `subscriber_sent` (отдельно от канала!)
 4. Если новых вакансий 0 — **сообщение не отправляется** (тишина)
-5. GetMatch только для `product_designer`
+5. GetMatch только для дизайн-ролей (`uses_getmatch=True` в `roles.py`)
 
-### Роли MVP
+### Роли
 
-| id | label | GetMatch |
-|----|-------|----------|
-| `product_designer` | продуктового дизайнера | да |
-| `frontend` | frontend-разработчика | нет |
-| `backend` | backend-разработчика | нет |
+Выбор двухшаговый: специальность (`role_categories.py`) → вакансии внутри неё
+(`roles.py`), можно отметить несколько.
 
-Расширение на fullstack, QA, PM и т.д. — добавить в `roles.py` + `role_filters.py`.
+| Специальность | id ролей | GetMatch |
+|---------------|----------|----------|
+| Дизайн | `product_designer`, `communication_designer`, `graphic_designer` | да |
+| Frontend | `frontend_react`, `frontend_vue`, `frontend_angular` | нет |
+| Backend | `backend_python`, `backend_java`, `backend_go` | нет |
+
+`frontend` и `backend` без суффикса — **legacy**: остались в `ROLES` ради уже
+подписанных пользователей, но в меню не показываются (нет в `role_categories.py`).
+
+Расширение на fullstack, QA, PM и т.д. — добавить в `roles.py` + `role_filters.py`
++ в нужную категорию в `role_categories.py`.
 
 ---
 
@@ -122,11 +128,12 @@ Cron-строки вводятся **в UI ISPmanager**, не в термина�
 
 | Кнопка | Действие |
 |--------|----------|
-| 🎯 Выбрать роль | Inline-кнопки ролей (Product Designer / Frontend / Backend) |
-| 📋 Моя подписка | Текущая подписка |
-| 🚫 Отписаться | Отмена рассылки |
+| Выбрать роли / Выбрать роли заново | Шаг 1 (специальность) → шаг 2 (мультивыбор вакансий) |
+| Мои вакансии | Текущая подписка |
+| Прекратить рассылку | Отмена рассылки |
 
 Команды `/start`, `/myrole`, `/stop` оставлены как fallback.
+`/stats` — сводка по подписчикам и каналу, только для `TELEGRAM_ADMIN_ID`.
 
 Пользователь **обязан** написать `/start` первым — иначе Telegram не даст
 слать сообщения в личку.
@@ -179,6 +186,16 @@ tail -30 logs/chat-bot.log
 3. **Смена роли** — при смене роли очищается `subscriber_sent` для пользователя
 4. **Пустая рассылка** — если новых вакансий 0, DM не отправляется (в отличие от канала)
 5. **Flood** — пауза 50 ms между подписчиками
+
+### Чат-бот (09.08.2026)
+
+1. **Watchdog не мог поднять бота** — `watchdog.sh` писал `echo $! > chat-bot.pid`
+   раньше, чем питон стартовал. `_acquire_single_instance` читал файл, видел
+   **собственный** pid, `os.kill(pid, 0)` проходил → «уже запущен» → `sys.exit(1)`.
+   Ручной запуск работал, запуск через watchdog — всегда самоубийство: бот лежал,
+   а в лог каждые 5 минут капало «Чат-бот уже запущен».
+   Починено в двух местах: watchdog больше не трогает pid-файл (владелец — сам бот),
+   и свой pid в файле больше не считается конфликтом. Тесты — `tests/test_single_instance.py`.
 
 ---
 

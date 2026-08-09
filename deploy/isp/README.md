@@ -42,7 +42,8 @@ nohup .venv/bin/python -m bot.chat_main >> logs/chat-bot.log 2>&1 &
 
 ## 5. Проверка
 
-- Напиши боту `/start` в личку → выбери роль
+- Напиши боту `/start` в личку → выбери роли
+- Проверка без отправки: `PYTHONIOENCODING=utf-8 .venv/bin/python -m bot.run_once subscribers-preview`
 - Ручная рассылка: `PYTHONIOENCODING=utf-8 .venv/bin/python -m bot.run_once subscribers`
 - Логи чат-бота: `tail -f logs/chat-bot.log`
 - Проверить процесс: `ps aux | grep chat_main` (не `pgrep` — на reg.ru может не работать)
@@ -57,6 +58,7 @@ nohup .venv/bin/python -m bot.chat_main >> logs/chat-bot.log 2>&1 &
 
 | Команда | Описание |
 |---------|----------|
-| `/start` | Выбор роли (Product Designer / Frontend / Backend) |
+| `/start` | Выбор ролей: специальность → вакансии внутри неё |
 | `/myrole` | Текущая подписка |
 | `/stop` | Отписаться |
+| `/stats` | Сводка по подписчикам и каналу (только `TELEGRAM_ADMIN_ID`) |

@@ -5,9 +5,7 @@ SOURCE_PRIORITY: dict[str, int] = {
     "hh.ru": 0,
     "careers": 1,
     "getmatch.ru": 2,
-    "habr.com": 3,
-    "geekjob.ru": 4,
-    "remote-job.ru": 5,
+    "geekjob.ru": 3,
 }
 
 

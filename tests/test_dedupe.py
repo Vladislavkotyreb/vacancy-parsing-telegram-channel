@@ -6,7 +6,7 @@ from bot.models import Vacancy
 
 
 class DedupePriorityTests(unittest.TestCase):
-    def test_hh_wins_over_habr_even_if_older(self):
+    def test_hh_wins_over_geekjob_even_if_older(self):
         hh = Vacancy(
             source="hh.ru",
             external_id="1",
@@ -15,15 +15,15 @@ class DedupePriorityTests(unittest.TestCase):
             url="https://hh.ru/vacancy/1",
             published_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
         )
-        habr = Vacancy(
-            source="habr.com",
+        geekjob = Vacancy(
+            source="geekjob.ru",
             external_id="2",
             title="Product Designer",
             company="Яндекс",
-            url="https://career.habr.com/vacancies/2",
+            url="https://geekjob.ru/vacancy/2",
             published_at=datetime(2026, 7, 2, tzinfo=timezone.utc),
         )
-        result = dedupe_by_title_company([habr, hh])
+        result = dedupe_by_title_company([geekjob, hh])
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].source, "hh.ru")
 
@@ -31,11 +31,11 @@ class DedupePriorityTests(unittest.TestCase):
         vacancies = dedupe_by_title_company(
             [
                 Vacancy(
-                    source="habr.com",
+                    source="geekjob.ru",
                     external_id="a",
                     title="UX Designer",
                     company="Ozon",
-                    url="https://habr.com/a",
+                    url="https://geekjob.ru/vacancy/a",
                     published_at=datetime(2026, 7, 2, tzinfo=timezone.utc),
                 ),
                 Vacancy(

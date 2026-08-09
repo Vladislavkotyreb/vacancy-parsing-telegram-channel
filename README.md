@@ -1,34 +1,41 @@
-# Telegram-бот: вакансии продуктового дизайнера
+# Telegram-бот: парсер вакансий
 
-Бот парсит вакансии **продуктового дизайнера** с крупнейших русскоязычных площадок РФ и СНГ и публикует **новые** вакансии **каждый день в 12:00** (по умолчанию — Москва).
+Один проект — два независимых продукта:
+
+| Продукт | Что делает | Точка входа |
+|---------|------------|-------------|
+| **Канал** [@prdsvac](https://t.me/prdsvac) | ежедневный дайджест вакансий продуктового дизайнера | `python -m bot.run_once fetch` |
+| **Подписки** | личные дайджесты в ЛС по выбранным ролям | `python -m bot.run_once subscribers` |
+| **Чат-бот** | UI подписки: выбор ролей, отписка, `/stats` | `python -m bot.chat_main` |
+
+Публикуются только вакансии, появившиеся за последние **72 часа** (`MAX_VACANCY_AGE_HOURS`).
+Прод крутится на reg.ru (ISPmanager): канал в 10:00 МСК, рассылка подписчикам в 10:02.
 
 ## Источники
 
 | Площадка | Покрытие |
 |----------|----------|
-| **HeadHunter (hh.ru)** | Россия, Беларусь, Казахстан, Узбекистан, Кыргызстан, Армения, Азербайджан, Молдова, Грузия, Таджикистан |
-| **Карьерные сайты бигтеха** | Прямые страницы вакансий крупных IT-компаний |
+| **HeadHunter (hh.ru)** | Россия, Беларусь, Казахстан, Узбекистан, Кыргызстан, Армения, Азербайджан, Молдова, Грузия, Таджикистан + прямой поиск по 11 работодателям бигтеха |
+| **Карьерные сайты** | `rabota.sber.ru` (HTML-парсинг) |
 | **GeekJob** | IT, удалёнка, РФ/СНГ |
-| **GetMatch** | Продуктовые и дизайн-вакансии, `language=ru` |
+| **GetMatch** | `specialization=design`, `language=ru` — только для дизайн-ролей |
 
-Фильтр оставляет только роли продуктового/UI/UX дизайна и отсекает аналитиков, менеджеров, motion/графику и т.п.
+## Роли
 
-## Быстрый старт
+Подписчик выбирает специальность, затем одну или несколько вакансий внутри неё
+(`bot/role_categories.py`, `bot/roles.py`):
 
-### 1. Создайте бота
+| Специальность | Вакансии |
+|---------------|----------|
+| Дизайн | UX/UI \| Продуктовый дизайнер, Коммуникационный дизайнер, Графический дизайнер |
+| Frontend | React, Vue, Angular |
+| Backend | Python, Java, Go |
 
-1. Откройте [@BotFather](https://t.me/BotFather) в Telegram.
-2. Команда `/newbot` → сохраните **токен**.
+В **канал** уходит только `product_designer` — фильтр `bot/filters.py`, он отсекает
+аналитиков, менеджеров, motion/графику и смежные роли. Для остальных ролей —
+regex-фильтры в `bot/role_filters.py`.
 
-### 2. Создайте канал или группу
-
-1. Создайте канал (например, «Product Design Jobs RU»).
-2. Добавьте бота **администратором** с правом публикации.
-3. Узнайте `chat_id`:
-   - для канала: перешлите любой пост канала боту [@userinfobot](https://t.me/userinfobot) или [@RawDataBot](https://t.me/RawDataBot);
-   - ID канала выглядит как `-1001234567890`.
-
-### 3. Настройте окружение
+## Локальный запуск
 
 ```bash
 cd "/Users/vladislavkotyrev/Desktop/тг бот парсер вакансий"
@@ -43,96 +50,120 @@ cp .env.example .env
 ```env
 TELEGRAM_BOT_TOKEN=ваш_токен
 TELEGRAM_CHAT_ID=-1001234567890
+TELEGRAM_ADMIN_ID=ваш_telegram_id
 HH_USER_AGENT=ProductDesignerVacancyBot/1.0 (your@email.com)
 HH_ACCESS_TOKEN=
 TIMEZONE=Europe/Moscow
+MAX_VACANCY_AGE_HOURS=72
 ```
 
-> **Важно:** для HH.ru API обязателен корректный `User-Agent` с контактным email. Если анонимные запросы получают `403`, зарегистрируйте приложение на `dev.hh.ru` и добавьте `HH_ACCESS_TOKEN` из кабинета приложения ([документация](https://github.com/hhru/api)).
+> **HH.ru API:** обязателен корректный `User-Agent` с контактным email. Если анонимные
+> запросы получают `403` — зарегистрируйте приложение на [dev.hh.ru](https://dev.hh.ru/admin)
+> и добавьте `HH_ACCESS_TOKEN` ([документация](https://github.com/hhru/api)).
 
-### 4. Запуск
+Режимы `bot.run_once`:
 
 ```bash
-source .venv/bin/activate
-python -m bot.main
+python -m bot.run_once fetch                # спарсить и опубликовать в канал
+python -m bot.run_once subscribers          # разослать дайджесты подписчикам
+python -m bot.run_once subscribers-preview  # что ушло бы подписчикам, без отправки
+python -m bot.run_once test                 # тестовый пост в канал на моках
+python -m bot.run_once status               # статистика последнего прогона
 ```
 
-Бот:
-- слушает команды в личке (`/start`, `/status`, `/fetch`);
-- каждый день в **12:00** парсит площадки и постит новые вакансии в канал.
-
-### 5. Автозапуск (macOS, launchd)
+Чат-бот подписок (polling, держит один процесс через pid-lock в `logs/chat-bot.pid`):
 
 ```bash
-# Пример plist — замените пути на свои
-cat > ~/Library/LaunchAgents/com.productdesign.vacancybot.plist <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.productdesign.vacancybot</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/Users/vladislavkotyrev/Desktop/тг бот парсер вакансий/.venv/bin/python</string>
-    <string>-m</string>
-    <string>bot.main</string>
-  </array>
-  <key>WorkingDirectory</key>
-  <string>/Users/vladislavkotyrev/Desktop/тг бот парсер вакансий</string>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-</dict>
-</plist>
-EOF
-
-launchctl load ~/Library/LaunchAgents/com.productdesign.vacancybot.plist
+python -m bot.chat_main
 ```
 
-### 6. Деплой без карты — GitHub Actions (бесплатно)
+> Одновременно с ботом нельзя запускать второй polling-процесс на том же токене —
+> Telegram отдаёт `getUpdates` только одному потребителю.
 
-Автопостинг каждый день в 12:00, карта не нужна: **[deploy/github/README.md](deploy/github/README.md)**
+## Тесты
 
-### 7. Деплой 24/7 на Google Cloud (Always Free)
+```bash
+python -m pytest tests/ -q
+```
 
-Инструкция: **[deploy/gcp/README.md](deploy/gcp/README.md)**
+## Деплой
 
-### 8. Деплой 24/7 на Oracle Cloud
+Прод — reg.ru / ISPmanager: **[deploy/isp/README.md](deploy/isp/README.md)** (cron,
+watchdog, обновление кода).
 
-Инструкция: **[deploy/oracle/README.md](deploy/oracle/README.md)**
+GitHub Actions (`.github/workflows/daily-vacancies.yml`) оставлен **только на ручной
+запуск** (`workflow_dispatch`): расписание отключено, чтобы у GitHub и сервера не
+разъезжались базы дедупликации.
 
-## Команды бота
+## Команды чат-бота
+
+Основной UI — кнопки меню внизу чата: «Мои вакансии», «Прекратить рассылку»,
+«Выбрать роли». Команды оставлены как fallback:
 
 | Команда | Описание |
 |---------|----------|
-| `/start` | Приветствие и описание |
-| `/status` | Статистика последнего прогона |
-| `/fetch` | Ручной запуск парсинга и публикации |
+| `/start` | Приветствие и запуск выбора ролей |
+| `/myrole` | Текущая подписка |
+| `/stop` | Отписаться |
+| `/stats` | Статистика (только для `TELEGRAM_ADMIN_ID`) |
+
+Пользователь **обязан** написать `/start` первым — иначе Telegram не даст боту
+писать ему в личку.
 
 ## Структура проекта
 
 ```
 bot/
-  main.py          — точка входа, планировщик, команды
-  config.py        — настройки и регионы HH
-  database.py      — SQLite, дедупликация
-  filters.py       — фильтр «продуктовый дизайнер»
-  formatters.py    — формат сообщений Telegram
-  service.py       — оркестрация парсеров
-  parsers/
-    hh.py          — HeadHunter API
-    bigtech.py     — карьерные сайты бигтеха
-    geekjob.py     — GeekJob JSON API
-    getmatch.ru    — GetMatch API
+  run_once.py               — cron: fetch | subscribers | subscribers-preview | test | status
+  chat_main.py              — polling-бот подписок (FSM: специальность → вакансии)
+
+  service.py                — КАНАЛ: collect → filter → post → save
+  subscriber_service.py     — ПОДПИСЧИКИ: сбор по ролям → DM каждому
+  subscriber_collect.py     — парсинг источников под конкретную роль
+  subscriber_formatters.py  — HTML личных дайджестов (без футера канала)
+  formatters.py             — HTML канала (+ футер @prdsvac), пагинация по 4096 символов
+
+  config.py                 — настройки, регионы HH, список работодателей и карьерных сайтов
+  roles.py / role_categories.py — роли и их группировка в меню
+  filters.py                — фильтр product designer (канал)
+  role_filters.py           — regex-фильтры остальных ролей
+  grades.py                 — грейд из названия / опыта HH
+  dates.py                  — парсинг дат, свежесть, дедуп по названию+компании
+  source_priority.py        — приоритет источников при дедупе
+  database.py               — SQLite: vacancies, run_log, subscribers, subscriber_roles, subscriber_sent
+  stats.py                  — сводка для /stats
+  russian.py                — склонения в текстах
+  parsers/                  — hh, bigtech, geekjob, getmatch
 data/
-  vacancies.db     — база (создаётся автоматически)
+  vacancies.db              — общая база (создаётся автоматически, WAL)
+logs/
+  chat-bot.log / chat-bot.pid
+deploy/isp/                 — прод: cron-инструкции и watchdog
+scripts/                    — разовые проверки
 ```
 
-## Примечания
+## Как работает дедупликация
 
-- Публикуются только **новые** вакансии за последние **72 часа** (по `source + id`, без дублей между площадками).
-- Сколько найдено новых и свежих — столько и уходит в канал (0, 5, 20 — без искусственного лимита).
+Три слоя, чтобы одна вакансия не ушла дважды:
+
+1. `uid = source:external_id` — точное совпадение внутри площадки.
+2. `dedup_key` — нормализованные `название|компания`, ловит кросс-площадочные дубли.
+   При конфликте побеждает источник с более высоким приоритетом (`source_priority.py`).
+3. Раздельные хранилища: канал помнит опубликованное в таблице `vacancies`,
+   подписчики — в `subscriber_sent` (по каждому пользователю отдельно).
+
+В `vacancies` пишутся **только опубликованные** вакансии. Иначе вакансия, впервые
+увиденная без даты публикации, навсегда блокировала бы себя по `dedup_key`.
+
+## Поведение рассылок
+
+- **Канал:** если новых вакансий нет — всё равно уходит уведомление «новых нет».
+- **Подписчики:** если новых нет — сообщение **не отправляется** (тишина).
+- Повторный ручной `subscribers` после успешной рассылки новых DM не даст —
+  вакансии уже в `subscriber_sent`. Это нормально.
 - Длинные дайджесты автоматически делятся на несколько сообщений Telegram.
-- При первом запуске `/fetch` сохранит все найденные вакансии в базу; в канал уйдут только те, что ещё не были известны.
+- При смене ролей `subscriber_sent` пользователя очищается — новая подписка
+  начинается с чистого листа.
+
+Подробности архитектуры, история багов и что нельзя ломать — в
+[AGENT_HANDOFF.md](AGENT_HANDOFF.md).
