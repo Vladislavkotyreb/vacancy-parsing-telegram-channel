@@ -25,6 +25,17 @@ logger = logging.getLogger(__name__)
 HH_REQUEST_DELAY_SEC = 0.2
 
 
+def _flatten_params(params: dict[str, Any]) -> list[tuple[str, str]]:
+    """HH принимает повторяющиеся ключи (professional_role), aiohttp — только пары."""
+    flat: list[tuple[str, str]] = []
+    for key, value in params.items():
+        if isinstance(value, (list, tuple)):
+            flat.extend((key, str(item)) for item in value)
+        else:
+            flat.append((key, str(value)))
+    return flat
+
+
 class HHParser(BaseParser):
     source = "hh.ru"
     API_URL = "https://api.hh.ru/vacancies"
@@ -73,6 +84,7 @@ class HHParser(BaseParser):
         matcher: Callable[[str], bool],
         *,
         max_pages: int = 3,
+        professional_roles: tuple[int, ...] = (),
     ) -> list[Vacancy]:
         results: dict[str, Vacancy] = {}
         forbidden = False
@@ -81,17 +93,23 @@ class HHParser(BaseParser):
         async with aiohttp.ClientSession(headers=self._headers()) as session:
             for area in HH_AREAS:
                 for query in queries:
+                    params: dict[str, Any] = {
+                        "text": query,
+                        "area": area,
+                        "per_page": 100,
+                        "order_by": "publication_time",
+                        "search_field": "name",
+                        "period": period,
+                    }
+                    # Сужает выдачу до нужной профобласти HH: для «тестировщика»
+                    # это отсекает контроль качества на стройке и в производстве.
+                    if professional_roles:
+                        params["professional_role"] = professional_roles
+
                     forbidden = await self._search(
                         session,
                         results,
-                        {
-                            "text": query,
-                            "area": area,
-                            "per_page": 100,
-                            "order_by": "publication_time",
-                            "search_field": "name",
-                            "period": period,
-                        },
+                        params,
                         matcher=matcher,
                         max_pages=max_pages,
                         forbidden=forbidden,
@@ -109,6 +127,7 @@ class HHParser(BaseParser):
         results: dict[str, Vacancy],
         matcher: Callable[[str], bool],
         queries: tuple[str, ...] | None = None,
+        professional_roles: tuple[int, ...] = (),
     ) -> None:
         period = self._period_days()
         added = 0
@@ -117,16 +136,20 @@ class HHParser(BaseParser):
         for company_name, employer_id in BIGTECH_HH_EMPLOYERS:
             for query in search_queries:
                 before = len(results)
+                params: dict[str, Any] = {
+                    "employer_id": employer_id,
+                    "text": query,
+                    "per_page": 100,
+                    "order_by": "publication_time",
+                    "period": period,
+                }
+                if professional_roles:
+                    params["professional_role"] = professional_roles
+
                 await self._search(
                     session,
                     results,
-                    {
-                        "employer_id": employer_id,
-                        "text": query,
-                        "per_page": 100,
-                        "order_by": "publication_time",
-                        "period": period,
-                    },
+                    params,
                     matcher=matcher,
                     max_pages=2,
                     forbidden=False,
@@ -140,10 +163,13 @@ class HHParser(BaseParser):
         self,
         matcher: Callable[[str], bool],
         queries: tuple[str, ...] | None = None,
+        professional_roles: tuple[int, ...] = (),
     ) -> list[Vacancy]:
         results: dict[str, Vacancy] = {}
         async with aiohttp.ClientSession(headers=self._headers()) as session:
-            await self._fetch_bigtech_employers(session, results, matcher, queries)
+            await self._fetch_bigtech_employers(
+                session, results, matcher, queries, professional_roles
+            )
         return list(results.values())
 
     async def _search(
@@ -161,7 +187,7 @@ class HHParser(BaseParser):
 
         for page in range(max_pages):
             params = {**base_params, "page": page}
-            async with session.get(self.API_URL, params=params) as resp:
+            async with session.get(self.API_URL, params=_flatten_params(params)) as resp:
                 if resp.status == 403:
                     logger.warning(
                         "HH.ru API 403 (auth=%s). Проверьте HH_ACCESS_TOKEN и HH_USER_AGENT.",

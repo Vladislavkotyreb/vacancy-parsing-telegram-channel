@@ -176,3 +176,89 @@ def is_go_developer_vacancy(title: str) -> bool:
         re.compile(r"google", re.I),
     ]
     return _matches(title, include, exclude)
+
+
+# --- Продукт и QA ---
+# Общий фон для менеджерских и QA-ролей: не забирать дизайн и разработку.
+PRODUCT_QA_EXCLUDE = [
+    re.compile(r"дизайн|designer|design\b", re.I),
+    re.compile(r"front[\s-]*end|back[\s-]*end|фронтенд|бэкенд", re.I),
+    re.compile(r"(?:python|java|golang|react|vue|angular|php)\s*(?:developer|разработ|engineer)", re.I),
+    re.compile(r"devops|sre|site reliability", re.I),
+    re.compile(r"аналитик|analyst", re.I),
+]
+
+# Отрасли, где то же название должности значит совсем другую работу: HH отдаёт
+# «Product Manager (медицинские изделия)» и «Продакт-менеджер товарного
+# направления» по тем же запросам и той же профобласти, что и продакта в IT.
+NON_IT_DOMAIN_EXCLUDE = [
+    re.compile(r"строительств|монтаж|прораб|металлоконструкц", re.I),
+    re.compile(r"медицин|стоматолог|фармац|клиник", re.I),
+    re.compile(r"категорийн|товарн|ритейл|розниц|закуп|продаж", re.I),
+    re.compile(r"недвижим|интерьер|мебел|трикотаж|одежд|бренд", re.I),
+    re.compile(r"продюсер|vfx", re.I),
+]
+
+# Автоматизация тестирования — отдельная роль, поэтому её термины нужны и как
+# include для qa_automation, и как exclude для qa_manual.
+QA_AUTOMATION_TERMS = [
+    re.compile(r"\baqa\b|\bsdet\b", re.I),
+    re.compile(r"автотестировщик|автотест", re.I),
+    re.compile(r"автоматизатор", re.I),
+    re.compile(r"тестировщик[\s-]*автоматизатор", re.I),
+    re.compile(r"автоматизац\w*\s+тестир|автоматизиров\w*\s+тестир", re.I),
+    re.compile(r"(?:test|qa)\s*automation|automation\s*(?:qa|test)", re.I),
+    re.compile(r"\bautomation\b", re.I),
+]
+
+
+def is_product_manager_vacancy(title: str) -> bool:
+    include = [
+        re.compile(r"product\s*manager", re.I),
+        re.compile(r"продакт[\s-]*менедж", re.I),
+        re.compile(r"продукт[\s-]*менедж", re.I),
+        re.compile(r"продуктов(?:ый|ого)\s*менедж", re.I),
+        re.compile(r"менеджер\s*продукт", re.I),
+        re.compile(r"менеджер\s+по\s+продукт", re.I),
+    ]
+    exclude = PRODUCT_QA_EXCLUDE + NON_IT_DOMAIN_EXCLUDE + [
+        re.compile(r"project|проджект", re.I),
+        re.compile(r"owner|оунер|владелец", re.I),
+        re.compile(r"\bqa\b|тестиров", re.I),
+    ]
+    return _matches(title, include, exclude)
+
+
+def is_product_owner_vacancy(title: str) -> bool:
+    include = [
+        re.compile(r"product\s*owner", re.I),
+        re.compile(r"продакт[\s-]*оунер", re.I),
+        re.compile(r"владелец\s*продукта", re.I),
+    ]
+    exclude = PRODUCT_QA_EXCLUDE + NON_IT_DOMAIN_EXCLUDE + [
+        re.compile(r"project|проджект", re.I),
+        re.compile(r"\bqa\b|тестиров", re.I),
+    ]
+    return _matches(title, include, exclude)
+
+
+
+
+def is_qa_manual_vacancy(title: str) -> bool:
+    include = [
+        re.compile(r"\bqa\b", re.I),
+        re.compile(r"quality\s*assurance", re.I),
+        re.compile(r"тестировщик", re.I),
+        re.compile(r"тестирован", re.I),
+    ]
+    exclude = PRODUCT_QA_EXCLUDE + QA_AUTOMATION_TERMS + [
+        re.compile(r"manager|менедж|owner", re.I),
+    ]
+    return _matches(title, include, exclude)
+
+
+def is_qa_automation_vacancy(title: str) -> bool:
+    exclude = PRODUCT_QA_EXCLUDE + [
+        re.compile(r"manager|менедж|owner", re.I),
+    ]
+    return _matches(title, QA_AUTOMATION_TERMS, exclude)

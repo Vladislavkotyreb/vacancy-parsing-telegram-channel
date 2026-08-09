@@ -78,8 +78,16 @@ async def _fetch_getmatch(role: Role) -> list[Vacancy]:
 
 async def _fetch_hh(settings: Settings, role: Role) -> list[Vacancy]:
     parser = HHParser(settings)
-    vacancies = await parser.fetch_for_queries(role.hh_queries, role.matcher)
-    bigtech = await parser.fetch_bigtech(role.matcher, role.hh_queries)
+    vacancies = await parser.fetch_for_queries(
+        role.hh_queries,
+        role.matcher,
+        professional_roles=role.hh_professional_roles,
+    )
+    bigtech = await parser.fetch_bigtech(
+        role.matcher,
+        role.hh_queries,
+        role.hh_professional_roles,
+    )
     merged = {vacancy.uid: vacancy for vacancy in vacancies}
     for vacancy in bigtech:
         merged[vacancy.uid] = vacancy

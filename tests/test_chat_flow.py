@@ -222,6 +222,32 @@ class FlowSimulationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.edited_texts, [])
 
 
+class ProductAndQaCategoriesTest(unittest.TestCase):
+    def test_step1_offers_product_and_qa(self):
+        labels = [
+            btn.text
+            for row in specialty_keyboard().inline_keyboard
+            for btn in row
+        ]
+        self.assertIn("Продукт", labels)
+        self.assertIn("QA", labels)
+
+    def test_product_category_roles(self):
+        data = _callback_data(vacancy_keyboard("product", set()))
+        self.assertIn(f"{S2_ROLE}product:product_manager", data)
+        self.assertIn(f"{S2_ROLE}product:product_owner", data)
+        self.assertIn(f"{S2_SAVE}product", data)
+
+    def test_qa_category_roles(self):
+        data = _callback_data(vacancy_keyboard("qa", set()))
+        self.assertIn(f"{S2_ROLE}qa:qa_manual", data)
+        self.assertIn(f"{S2_ROLE}qa:qa_automation", data)
+
+    def test_draft_reads_new_categories(self):
+        keyboard = vacancy_keyboard("qa", {"qa_automation"})
+        self.assertEqual(_draft_from_keyboard(keyboard), {"qa_automation"})
+
+
 class SavedRolesForCategoryTest(unittest.TestCase):
     def test_filters_to_category(self):
         saved = ["product_designer", "frontend_react", "backend_go"]

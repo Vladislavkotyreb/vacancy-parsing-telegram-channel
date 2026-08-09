@@ -80,6 +80,12 @@ deploy/isp/
 
 ### Подписчики (MVP)
 
+0. **Флоу выбора ролей не хранит состояние.** Категория лежит в `callback_data`
+   (`s2:role:<category>:<role>`, `s2:save:<category>`), отмеченные роли читаются
+   из галочек клавиатуры (`_draft_from_keyboard`). FSM и MemoryStorage убраны:
+   раньше рестарт `chat_main` обнулял их, и все открытые клавиатуры отваливались
+   с «Сначала выбери специальность». Не возвращай FSM — состояние в памяти на
+   shared hosting теряется постоянно.
 1. Пользователь: `/start` → inline-кнопка роли → `subscribers` table
 2. Cron `subscribers`: для каждой роли с подписчиками — `collect_for_role`
 3. Per-user dedup через `subscriber_sent` (отдельно от канала!)
@@ -91,11 +97,18 @@ deploy/isp/
 Выбор двухшаговый: специальность (`role_categories.py`) → вакансии внутри неё
 (`roles.py`), можно отметить несколько.
 
-| Специальность | id ролей | GetMatch |
-|---------------|----------|----------|
-| Дизайн | `product_designer`, `communication_designer`, `graphic_designer` | да |
-| Frontend | `frontend_react`, `frontend_vue`, `frontend_angular` | нет |
-| Backend | `backend_python`, `backend_java`, `backend_go` | нет |
+| Специальность | id ролей | GetMatch | professional_role HH |
+|---------------|----------|----------|----------------------|
+| Дизайн | `product_designer`, `communication_designer`, `graphic_designer` | да | — |
+| Frontend | `frontend_react`, `frontend_vue`, `frontend_angular` | нет | — |
+| Backend | `backend_python`, `backend_java`, `backend_go` | нет | — |
+| Продукт | `product_manager`, `product_owner` | нет | 73 |
+| QA | `qa_manual`, `qa_automation` | нет | 124 |
+
+`hh_professional_roles` нужен там, где по названию не видно отрасли. Для QA
+(`124`) это работает отлично — уходит контроль качества на стройке и на
+производстве. Для продакта (`73`) эффект частичный, поэтому дополнительно
+работает `NON_IT_DOMAIN_EXCLUDE` в `role_filters.py`.
 
 `frontend` и `backend` без суффикса — **legacy**: остались в `ROLES` ради уже
 подписанных пользователей, но в меню не показываются (нет в `role_categories.py`).
@@ -196,6 +209,19 @@ tail -30 logs/chat-bot.log
    а в лог каждые 5 минут капало «Чат-бот уже запущен».
    Починено в двух местах: watchdog больше не трогает pid-файл (владелец — сам бот),
    и свой pid в файле больше не считается конфликтом. Тесты — `tests/test_single_instance.py`.
+2. **Клавиатуры умирали при рестарте** — FSM жил в `MemoryStorage`, после
+   перезапуска нажатие роли давало «Сначала выбери специальность». Убрано
+   состояние целиком (см. «Подписчики», п. 0). Тесты — `tests/test_chat_flow.py`,
+   в частности `test_keyboard_still_works_after_restart`.
+3. **QA и PM тонули в не-IT** — «тестировщик техники», «инженер по качеству
+   (дорожное строительство)», «Продакт-менеджер товарного направления»,
+   «Product Manager (медицинские изделия, стоматология)». Добавлены
+   `hh_professional_roles` и `NON_IT_DOMAIN_EXCLUDE`; этот мусор с живой выдачи
+   HH ушёл, пересечений между ролями не осталось.
+4. **Пропуски в паттернах QA и PM** — живая выдача показала незакрытые формы:
+   «Автотестировщик», «Тестировщик-автоматизатор», «QA Lead (Manual +
+   Automation)», «Менеджер по продукту», «Проектный менеджер». Все добавлены
+   в `role_filters.py` и закреплены тестами в `tests/test_role_filters.py`.
 
 ---
 
@@ -206,6 +232,13 @@ tail -30 logs/chat-bot.log
 - **HH даты** приходят в формате `+0300`; `parse_iso_datetime` нормализует его в `+03:00`.
 - **GetMatch** не подходит для dev-ролей (specialization=design).
 - **Фильтры frontend/backend** — эвристика по title, возможны false positive/negative.
+- **`project_manager` сознательно не добавлен.** Роль была написана и проверена
+  на живой выдаче HH — и выброшена: «Руководитель проектов» в РФ доминируют
+  стройка, производство и энергетика, а HH держит их под тем же
+  `professional_role=107`, что и IT. Даже со словарём предметных областей
+  сквозь фильтр проходило ~⅓ мусора вроде «Руководитель проектов (энергетика)».
+  Не добавляй её обратно, не решив, чем отделять IT — заголовок и профобласть
+  HH для этого не годятся.
 - **shared hosting** — `chat_main` может падать; watchdog перезапускает каждые 5 мин.
 - **Повторный ручной `subscribers`** после успешной рассылки — новых DM не будет
   (вакансии уже в `subscriber_sent`). Это нормально.
