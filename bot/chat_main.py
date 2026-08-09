@@ -1,4 +1,9 @@
-"""Чат-бот для подписок на персональные дайджесты вакансий."""
+"""Чат-бот для подписок на персональные дайджесты вакансий.
+
+Флоу выбора ролей не хранит состояние: категория едет в callback_data кнопок,
+а отмеченные роли читаются из галочек в самой клавиатуре. Поэтому рестарт
+процесса не ломает уже показанные пользователю клавиатуры.
+"""
 
 from __future__ import annotations
 
@@ -7,13 +12,10 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Optional
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -41,14 +43,12 @@ BTN_CHOOSE_ROLES = "Выбрать роли"
 BTN_CHOOSE_ROLES_AGAIN = "Выбрать роли заново"
 
 S1_CAT = "s1:cat:"
-S2_ROLE = "s2:role:"
-S2_SAVE = "s2:save"
+S2_ROLE = "s2:role:"  # s2:role:<category_id>:<role_id>
+S2_SAVE = "s2:save:"  # s2:save:<category_id>
 S2_BACK = "s2:back"
 
-
-class SubscribeFlow(StatesGroup):
-    specialty = State()
-    vacancy = State()
+# Префикс отмеченной роли в клавиатуре — он же признак «роль в черновике».
+MARK = "✓ "
 
 
 def _acquire_single_instance() -> None:
@@ -107,6 +107,29 @@ def _saved_roles_for_category(saved_roles: list[str], category_id: str) -> list[
     return [role_id for role_id in saved_roles if role_id in allowed]
 
 
+def _parse_role_callback(data: str) -> tuple[str, str]:
+    """s2:role:<category_id>:<role_id> → (category_id, role_id)."""
+    category_id, _, role_id = data[len(S2_ROLE) :].partition(":")
+    return category_id, role_id
+
+
+def _draft_from_keyboard(markup: Optional[InlineKeyboardMarkup]) -> set[str]:
+    """Черновик выбора живёт в самой клавиатуре, а не в памяти процесса."""
+    draft: set[str] = set()
+    if not markup:
+        return draft
+
+    for row in markup.inline_keyboard:
+        for button in row:
+            data = button.callback_data or ""
+            if not data.startswith(S2_ROLE) or not button.text.startswith(MARK):
+                continue
+            _, role_id = _parse_role_callback(data)
+            if role_id:
+                draft.add(role_id)
+    return draft
+
+
 def main_menu_keyboard(subscribed: bool = False) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -143,19 +166,19 @@ def vacancy_keyboard(category_id: str, draft: set[str]) -> InlineKeyboardMarkup:
         role = ROLES.get(role_id)
         if not role:
             continue
-        mark = "✓ " if role_id in draft else ""
+        mark = MARK if role_id in draft else ""
         rows.append(
             [
                 InlineKeyboardButton(
                     text=f"{mark}{role.button_label}",
-                    callback_data=f"{S2_ROLE}{role_id}",
+                    callback_data=f"{S2_ROLE}{category_id}:{role_id}",
                 )
             ]
         )
     rows.append(
         [
             InlineKeyboardButton(text="← Назад", callback_data=S2_BACK),
-            InlineKeyboardButton(text="Продолжить", callback_data=S2_SAVE),
+            InlineKeyboardButton(text="Продолжить", callback_data=f"{S2_SAVE}{category_id}"),
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -200,9 +223,7 @@ def _vacancy_step_text(category_id: str, draft: set[str], saved_roles: list[str]
     return "\n".join(lines)
 
 
-async def _show_specialty_step(message: Message, state: FSMContext) -> None:
-    await state.set_state(SubscribeFlow.specialty)
-    await state.update_data(category_id=None, draft_roles=[])
+async def _show_specialty_step(message: Message) -> None:
     await message.edit_text(
         _specialty_step_text(),
         parse_mode="HTML",
@@ -212,13 +233,10 @@ async def _show_specialty_step(message: Message, state: FSMContext) -> None:
 
 async def _show_vacancy_step(
     message: Message,
-    state: FSMContext,
     category_id: str,
     draft: set[str],
     saved_roles: list[str],
 ) -> None:
-    await state.set_state(SubscribeFlow.vacancy)
-    await state.update_data(category_id=category_id, draft_roles=sorted(draft))
     await message.edit_text(
         _vacancy_step_text(category_id, draft, saved_roles),
         parse_mode="HTML",
@@ -236,10 +254,7 @@ async def send_welcome(message: Message, subscribed: bool = False) -> None:
     )
 
 
-async def start_flow(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    await state.set_state(SubscribeFlow.specialty)
-    await state.update_data(category_id=None, draft_roles=[])
+async def start_flow(message: Message) -> None:
     await message.answer(
         _specialty_step_text(),
         parse_mode="HTML",
@@ -269,11 +284,10 @@ async def send_subscription_info(message: Message, db: VacancyDatabase) -> None:
     )
 
 
-async def unsubscribe_user(message: Message, db: VacancyDatabase, state: FSMContext) -> None:
+async def unsubscribe_user(message: Message, db: VacancyDatabase) -> None:
     if not message.from_user:
         return
 
-    await state.clear()
     subscriber = db.get_subscriber(message.from_user.id)
     if not subscriber:
         await message.answer(
@@ -290,15 +304,15 @@ async def unsubscribe_user(message: Message, db: VacancyDatabase, state: FSMCont
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message, state: FSMContext, db: VacancyDatabase) -> None:
+async def cmd_start(message: Message, db: VacancyDatabase) -> None:
     subscribed = _is_subscribed(message.from_user.id, db) if message.from_user else False
     await send_welcome(message, subscribed)
-    await start_flow(message, state)
+    await start_flow(message)
 
 
 @router.message(F.text.in_({BTN_CHOOSE_ROLES, BTN_CHOOSE_ROLES_AGAIN}))
-async def btn_choose_roles(message: Message, state: FSMContext) -> None:
-    await start_flow(message, state)
+async def btn_choose_roles(message: Message) -> None:
+    await start_flow(message)
 
 
 @router.message(F.text == BTN_MY_SUBSCRIPTION)
@@ -307,13 +321,13 @@ async def btn_my_subscription(message: Message, db: VacancyDatabase) -> None:
 
 
 @router.message(F.text == BTN_UNSUBSCRIBE)
-async def btn_unsubscribe(message: Message, db: VacancyDatabase, state: FSMContext) -> None:
-    await unsubscribe_user(message, db, state)
+async def btn_unsubscribe(message: Message, db: VacancyDatabase) -> None:
+    await unsubscribe_user(message, db)
 
 
 @router.message(Command("stop"))
-async def cmd_stop(message: Message, db: VacancyDatabase, state: FSMContext) -> None:
-    await unsubscribe_user(message, db, state)
+async def cmd_stop(message: Message, db: VacancyDatabase) -> None:
+    await unsubscribe_user(message, db)
 
 
 @router.message(Command("myrole"))
@@ -336,9 +350,7 @@ async def cmd_stats(message: Message, db: VacancyDatabase, settings: Settings) -
 # --- Шаг 1: специальность (тап → сразу шаг 2) ---
 
 @router.callback_query(F.data.startswith(S1_CAT))
-async def s1_pick_specialty(
-    callback: CallbackQuery, state: FSMContext, db: VacancyDatabase
-) -> None:
+async def s1_pick_specialty(callback: CallbackQuery, db: VacancyDatabase) -> None:
     if not callback.data or not callback.message or not callback.from_user:
         return
 
@@ -351,75 +363,57 @@ async def s1_pick_specialty(
     draft = set(_saved_roles_for_category(saved_roles, category_id))
 
     await callback.answer()
-    await _show_vacancy_step(callback.message, state, category_id, draft, saved_roles)
+    await _show_vacancy_step(callback.message, category_id, draft, saved_roles)
 
 
 # --- Шаг 2: вакансии ---
 
 @router.callback_query(F.data == S2_BACK)
-async def s2_back(callback: CallbackQuery, state: FSMContext, db: VacancyDatabase) -> None:
+async def s2_back(callback: CallbackQuery) -> None:
     if not callback.message:
         return
 
-    await state.clear()
-    await state.set_state(SubscribeFlow.specialty)
-    await state.update_data(category_id=None, draft_roles=[])
-
     await callback.answer("Выбор отменён")
-    await _show_specialty_step(callback.message, state)
+    await _show_specialty_step(callback.message)
 
 
 @router.callback_query(F.data.startswith(S2_ROLE))
-async def s2_toggle_vacancy(
-    callback: CallbackQuery, state: FSMContext, db: VacancyDatabase
-) -> None:
-    if not callback.data or not callback.message:
+async def s2_toggle_vacancy(callback: CallbackQuery, db: VacancyDatabase) -> None:
+    if not callback.data or not callback.message or not callback.from_user:
         return
 
-    role_id = callback.data[len(S2_ROLE) :]
+    category_id, role_id = _parse_role_callback(callback.data)
+    if not get_category(category_id):
+        await callback.answer("Сначала выбери специальность", show_alert=True)
+        return
     if role_id not in ROLES:
         await callback.answer("Неизвестная роль", show_alert=True)
         return
 
-    data = await state.get_data()
-    category_id = data.get("category_id")
-    if not category_id:
-        await callback.answer("Сначала выбери специальность", show_alert=True)
-        return
-
-    draft = set(data.get("draft_roles") or [])
+    draft = _draft_from_keyboard(callback.message.reply_markup)
     if role_id in draft:
         draft.remove(role_id)
     else:
         draft.add(role_id)
 
-    await state.update_data(draft_roles=sorted(draft))
     await callback.answer()
 
-    saved_roles = db.get_subscriber_roles(callback.from_user.id) if callback.from_user else []
-    await callback.message.edit_text(
-        _vacancy_step_text(category_id, draft, saved_roles),
-        parse_mode="HTML",
-        reply_markup=vacancy_keyboard(category_id, draft),
-    )
+    saved_roles = db.get_subscriber_roles(callback.from_user.id)
+    await _show_vacancy_step(callback.message, category_id, draft, saved_roles)
 
 
-@router.callback_query(F.data == S2_SAVE)
-async def s2_save(callback: CallbackQuery, state: FSMContext, db: VacancyDatabase) -> None:
-    if not callback.from_user or not callback.message:
+@router.callback_query(F.data.startswith(S2_SAVE))
+async def s2_save(callback: CallbackQuery, db: VacancyDatabase) -> None:
+    if not callback.data or not callback.from_user or not callback.message:
         return
 
-    if await state.get_state() != SubscribeFlow.vacancy.state:
-        await callback.answer("Сначала выбери вакансии", show_alert=True)
-        return
-
-    data = await state.get_data()
-    draft = data.get("draft_roles") or []
-    category_id = data.get("category_id")
-    category = get_category(category_id) if category_id else None
+    category_id = callback.data[len(S2_SAVE) :]
+    category = get_category(category_id)
     if not category:
         await callback.answer("Сначала выбери направление", show_alert=True)
         return
+
+    draft = sorted(_draft_from_keyboard(callback.message.reply_markup))
 
     if not draft:
         saved_roles = db.get_subscriber_roles(callback.from_user.id)
@@ -432,10 +426,8 @@ async def s2_save(callback: CallbackQuery, state: FSMContext, db: VacancyDatabas
             if not db.get_subscriber_roles(callback.from_user.id):
                 db.deactivate_subscriber(callback.from_user.id)
 
-        await state.set_state(SubscribeFlow.specialty)
-        await state.update_data(category_id=None, draft_roles=[])
         await callback.answer()
-        await _show_specialty_step(callback.message, state)
+        await _show_specialty_step(callback.message)
         return
 
     db.replace_category_roles(
@@ -443,7 +435,6 @@ async def s2_save(callback: CallbackQuery, state: FSMContext, db: VacancyDatabas
         set(category.role_ids),
         draft,
     )
-    await state.clear()
     await callback.answer("Подписка сохранена")
 
     all_roles = db.get_subscriber_roles(callback.from_user.id)
@@ -481,8 +472,7 @@ async def main() -> None:
 
     _acquire_single_instance()
 
-    storage = MemoryStorage()
-    dp = Dispatcher(storage=storage)
+    dp = Dispatcher()
     dp.update.middleware(InjectMiddleware(db=db, settings=settings))
     dp.include_router(router)
 
