@@ -5,6 +5,8 @@ from __future__ import annotations
 import unittest
 
 from bot.role_filters import (
+    is_art_director_vacancy,
+    is_graphic_designer_vacancy,
     is_product_manager_vacancy,
     is_product_owner_vacancy,
     is_python_developer_vacancy,
@@ -13,6 +15,64 @@ from bot.role_filters import (
     is_react_developer_vacancy,
 )
 from bot.filters import is_product_designer_vacancy
+
+
+class ArtDirectorTests(unittest.TestCase):
+    def test_matches_real_hh_titles(self):
+        """Заголовки из живой выдачи HH."""
+        for title in (
+            "Art Director",
+            "Art Director GameDev",
+            "Senior Art Director",
+            "Арт директор (CG/мультимедиа)",
+            "Арт-директор (digital, motion, branding)",
+            "Арт-директор/Дизайнер по упаковке",
+            "Арт-Директор/Креативный директор",
+            "Арт-директор в Рекламное Агентство",
+            "Графический дизайнер / Арт директор в fashion/мерч (digital + полиграфия)",
+        ):
+            self.assertTrue(is_art_director_vacancy(title), title)
+
+    def test_matches_odd_dashes(self):
+        """На HH встречаются пробелы вокруг дефиса и длинное тире."""
+        for title in ("Арт - директор", "Бренд директор (арт – директор в девелоперской компании)"):
+            self.assertTrue(is_art_director_vacancy(title), title)
+
+    def test_rejects_hospitality_and_events(self):
+        """В РФ «арт-директор» — ещё и ведущий программы в баре или клубе."""
+        for title in (
+            "Арт-директор в гастроособняк Орбита",
+            "Концертный менеджер / Арт-директор",
+            "Партнер / Арт-директор / Управляющий бьюти-салона с ИИ-управлением",
+            "Арт-директор ресторана",
+            "Арт-директор ночного клуба",
+            "Арт-директор караоке-бара",
+            "Арт-директор анимационной команды в отель",
+        ):
+            self.assertFalse(is_art_director_vacancy(title), title)
+
+    def test_rejects_interior_like_other_design_roles(self):
+        self.assertFalse(
+            is_art_director_vacancy("Ведущий дизайнер интерьера / тимлид / арт-директор")
+        )
+
+    def test_rejects_neighbouring_roles(self):
+        """Креативный и дизайн-директор — соседние, но другие роли."""
+        for title in (
+            "Креативный директор",
+            "Креативный директор / Head of Marketing",
+            "Дизайн директор",
+            "Руководитель дизайн-отдела",
+            "Графический дизайнер",
+            "Product Designer",
+        ):
+            self.assertFalse(is_art_director_vacancy(title), title)
+
+    def test_existing_design_roles_unchanged(self):
+        """Новая роль не должна менять ленты нынешних подписчиков."""
+        for title in ("Art Director", "Арт-директор", "Senior Art Director"):
+            self.assertFalse(is_product_designer_vacancy(title), title)
+            self.assertFalse(is_graphic_designer_vacancy(title), title)
 
 
 class ProductManagerTests(unittest.TestCase):

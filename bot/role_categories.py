@@ -15,7 +15,12 @@ CATEGORIES: dict[str, RoleCategory] = {
     "design": RoleCategory(
         id="design",
         title="Дизайн",
-        role_ids=("product_designer", "communication_designer", "graphic_designer"),
+        role_ids=(
+            "product_designer",
+            "communication_designer",
+            "graphic_designer",
+            "art_director",
+        ),
     ),
     "frontend": RoleCategory(
         id="frontend",

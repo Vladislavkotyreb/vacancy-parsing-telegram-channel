@@ -243,6 +243,12 @@ class ProductAndQaCategoriesTest(unittest.TestCase):
         self.assertIn(f"{S2_ROLE}qa:qa_manual", data)
         self.assertIn(f"{S2_ROLE}qa:qa_automation", data)
 
+    def test_design_category_offers_art_director(self):
+        keyboard = vacancy_keyboard("design", set())
+        self.assertIn(f"{S2_ROLE}design:art_director", _callback_data(keyboard))
+        labels = [btn.text for row in keyboard.inline_keyboard for btn in row]
+        self.assertIn("Арт-директор", labels)
+
     def test_draft_reads_new_categories(self):
         keyboard = vacancy_keyboard("qa", {"qa_automation"})
         self.assertEqual(_draft_from_keyboard(keyboard), {"qa_automation"})

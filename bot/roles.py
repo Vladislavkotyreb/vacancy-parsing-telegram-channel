@@ -6,6 +6,7 @@ from typing import Callable, Optional
 from bot.filters import is_product_designer_vacancy
 from bot.role_filters import (
     is_angular_developer_vacancy,
+    is_art_director_vacancy,
     is_backend_vacancy,
     is_communication_designer_vacancy,
     is_frontend_vacancy,
@@ -82,6 +83,20 @@ ROLES: dict[str, Role] = {
         geekjob_queries=("графический дизайнер", "graphic designer", "дизайнер"),
         uses_getmatch=True,
         matcher=is_graphic_designer_vacancy,
+    ),
+    "art_director": Role(
+        id="art_director",
+        label="арт-директора",
+        button_label="Арт-директор",
+        hh_queries=("арт-директор", "арт директор", "art director"),
+        geekjob_queries=("арт-директор", "art director"),
+        uses_getmatch=True,
+        matcher=is_art_director_vacancy,
+        # 12 — «Арт-директор, креативный директор», 34 — «Дизайнер, художник».
+        # Одной 12 мало: «Арт-директор/Дизайнер по упаковке» работодатели
+        # относят к 34. Зато обе вместе отсекают концертных менеджеров и пиар
+        # ресторанов, которых по заголовку не отличить.
+        hh_professional_roles=(12, 34),
     ),
     "frontend_react": Role(
         id="frontend_react",

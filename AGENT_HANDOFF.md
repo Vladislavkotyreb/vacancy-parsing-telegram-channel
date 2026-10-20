@@ -105,7 +105,7 @@ deploy/isp/
 
 | Специальность | id ролей | GetMatch | professional_role HH |
 |---------------|----------|----------|----------------------|
-| Дизайн | `product_designer`, `communication_designer`, `graphic_designer` | да | — |
+| Дизайн | `product_designer`, `communication_designer`, `graphic_designer`, `art_director` | да | только `art_director`: 12, 34 |
 | Frontend | `frontend_react`, `frontend_vue`, `frontend_angular` | нет | — |
 | Backend | `backend_python`, `backend_java`, `backend_go` | нет | — |
 | Продукт | `product_manager`, `product_owner` | нет | 73 |
@@ -115,6 +115,13 @@ deploy/isp/
 (`124`) это работает отлично — уходит контроль качества на стройке и на
 производстве. Для продакта (`73`) эффект частичный, поэтому дополнительно
 работает `NON_IT_DOMAIN_EXCLUDE` в `role_filters.py`.
+
+`art_director`: «арт-директор» в РФ — ещё и ведущий программы в баре,
+клубе, на концерте. Профобласть 12 («Арт-директор, креативный директор»)
+одна режет и нужное — «Арт-директор/Дизайнер по упаковке» лежит в 34
+(«Дизайнер, художник»), поэтому заданы обе, а заведения и мероприятия
+добиваются `ART_DIRECTOR_EXCLUDE`. Креативный и дизайн-директор в роль
+намеренно не входят — это соседние, но другие должности.
 
 `frontend` и `backend` без суффикса — **legacy**: остались в `ROLES` ради уже
 подписанных пользователей, но в меню не показываются (нет в `role_categories.py`).

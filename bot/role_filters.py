@@ -100,8 +100,29 @@ COMMUNICATION_EXCLUDE = [
 ]
 
 
+ART_DIRECTOR_INCLUDE = [
+    # На HH пишут и «Арт - директор», и «арт – директор» с длинным тире.
+    re.compile(r"арт\s*[-–—]?\s*директор", re.I),
+    re.compile(r"art\s*[-–—]?\s*director", re.I),
+]
+
+ART_DIRECTOR_EXCLUDE = [
+    # «Арт-директор» в РФ — ещё и ведущий программы в баре, клубе или на
+    # концертной площадке: это организация мероприятий, а не дизайн.
+    re.compile(r"ресторан|кафе|\bбар|гастро|клуб|караоке|кальян|банкет", re.I),
+    re.compile(r"концерт|музык|ивент|event|мероприят|отел|гостиниц|лагер", re.I),
+    re.compile(r"салон|бьюти|beauty", re.I),
+    # Интерьер исключён и в остальных дизайнерских ролях.
+    re.compile(r"интерьер|interior", re.I),
+]
+
+
 def is_graphic_designer_vacancy(title: str) -> bool:
     return _matches(title, GRAPHIC_INCLUDE, GRAPHIC_EXCLUDE)
+
+
+def is_art_director_vacancy(title: str) -> bool:
+    return _matches(title, ART_DIRECTOR_INCLUDE, ART_DIRECTOR_EXCLUDE)
 
 
 def is_communication_designer_vacancy(title: str) -> bool:
