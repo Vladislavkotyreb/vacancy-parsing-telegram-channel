@@ -59,6 +59,7 @@ class GetMatchParser(BaseParser):
 
         salary = self._format_salary(offer)
         location = self._format_location(offer)
+        is_remote = self._resolve_remote(offer)
 
         published_at = None
         if published := offer.get("published_at"):
@@ -79,7 +80,16 @@ class GetMatchParser(BaseParser):
             salary=salary,
             location=location,
             published_at=published_at,
+            is_remote=is_remote,
         )
+
+    @staticmethod
+    def _resolve_remote(offer: dict[str, Any]) -> Optional[bool]:
+        """Формат работы тонул в строке location — достаём его отдельно."""
+        locations = offer.get("location_requirements") or []
+        if not locations:
+            return None
+        return any(loc.get("format") == "remote" for loc in locations)
 
     @staticmethod
     def _format_salary(offer: dict[str, Any]) -> Optional[str]:

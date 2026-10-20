@@ -45,6 +45,31 @@ regex-фильтры в `bot/role_filters.py`.
 отмеченные вакансии читаются из галочек самой клавиатуры. Поэтому перезапуск
 `chat_main` не ломает уже открытые у пользователей клавиатуры.
 
+## Фильтр «только удалёнка»
+
+Кнопка **«Фильтры»** в меню бота. По умолчанию выключен — подписчики, которые
+его не трогали, получают всё как раньше.
+
+Формат работы приходит с площадок и хранится в `Vacancy.is_remote` тремя
+значениями: `True` — удалёнка, `False` — точно не удалёнка, `None` — площадка
+не сказала. При включённом фильтре доходят **только** `True`: `None` считается
+неизвестным, а не удалёнкой.
+
+| Источник | Откуда берётся |
+|----------|----------------|
+| hh.ru | `schedule.id == "remote"` |
+| geekjob.ru | `jobFormat.remote` |
+| getmatch.ru | `location_requirements[].format == "remote"` |
+| careers (Сбер) | не отдаёт — такие вакансии под фильтр не попадают |
+
+Фильтр применяется **после** общего сбора (`bot/subscriber_filters.py`), а не в
+запросах к площадкам: сбор кэшируется один раз на роль и делится между всеми
+подписчиками. Фильтрация на этапе запроса означала бы отдельный обход источников
+под каждую комбинацию настроек и заметно повысила бы риск словить `403` от HH.
+
+Смена фильтра **не** очищает `subscriber_sent` (в отличие от смены ролей) —
+иначе включение фильтра вызвало бы повторную рассылку уже отправленного.
+
 ## Локальный запуск
 
 ```bash
@@ -107,8 +132,8 @@ GitHub Actions (`.github/workflows/daily-vacancies.yml`) оставлен **то
 
 ## Команды чат-бота
 
-Основной UI — кнопки меню внизу чата: «Мои вакансии», «Прекратить рассылку»,
-«Выбрать роли». Команды оставлены как fallback:
+Основной UI — кнопки меню внизу чата: «Мои вакансии», «Фильтры»,
+«Прекратить рассылку», «Выбрать роли». Команды оставлены как fallback:
 
 | Команда | Описание |
 |---------|----------|
@@ -125,11 +150,12 @@ GitHub Actions (`.github/workflows/daily-vacancies.yml`) оставлен **то
 ```
 bot/
   run_once.py               — cron: fetch | subscribers | subscribers-preview | test | status
-  chat_main.py              — polling-бот подписок (FSM: специальность → вакансии)
+  chat_main.py              — polling-бот подписок (специальность → вакансии, фильтры)
 
   service.py                — КАНАЛ: collect → filter → post → save
   subscriber_service.py     — ПОДПИСЧИКИ: сбор по ролям → DM каждому
   subscriber_collect.py     — парсинг источников под конкретную роль
+  subscriber_filters.py     — персональные фильтры поверх собранного (удалёнка)
   subscriber_formatters.py  — HTML личных дайджестов (без футера канала)
   formatters.py             — HTML канала (+ футер @prdsvac), пагинация по 4096 символов
 
@@ -140,7 +166,8 @@ bot/
   grades.py                 — грейд из названия / опыта HH
   dates.py                  — парсинг дат, свежесть, дедуп по названию+компании
   source_priority.py        — приоритет источников при дедупе
-  database.py               — SQLite: vacancies, run_log, subscribers, subscriber_roles, subscriber_sent
+  database.py               — SQLite: vacancies, run_log, subscribers (+include_remote),
+                              subscriber_roles, subscriber_sent
   stats.py                  — сводка для /stats
   russian.py                — склонения в текстах
   parsers/                  — hh, bigtech, geekjob, getmatch

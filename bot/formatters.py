@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from bot.grades import extract_grade
 from bot.models import Vacancy
 
@@ -15,7 +17,20 @@ SEPARATOR = "\n\n" + "—" * 16 + "\n\n"
 CHANNEL_FOOTER = "\n\n" + "—" * 9 + "\n" + '<a href="https://t.me/prdsvac">Product design vacancies daily</a>'
 
 
-def format_vacancy(vacancy: Vacancy) -> str:
+def _location_line(vacancy: Vacancy, show_remote: bool) -> Optional[str]:
+    location = vacancy.location or vacancy.work_format
+    if not (show_remote and vacancy.is_remote):
+        return location
+    # У HH в location лежит город, поэтому без пометки удалённая вакансия
+    # выглядит как офисная — и включённый фильтр кажется сломанным.
+    if not location:
+        return "Удалённо"
+    if "удал" in location.lower():
+        return location
+    return f"{location} · удалённо"
+
+
+def format_vacancy(vacancy: Vacancy, *, show_remote: bool = False) -> str:
     source = SOURCE_LABELS.get(vacancy.source, vacancy.source)
     lines = [
         f"🎨 <b>{escape_html(vacancy.title)}</b>",
@@ -31,8 +46,7 @@ def format_vacancy(vacancy: Vacancy) -> str:
     if vacancy.salary:
         lines.append(f"💰 {escape_html(vacancy.salary)}")
 
-    location = vacancy.location or vacancy.work_format
-    if location:
+    if location := _location_line(vacancy, show_remote):
         lines.append(f"📍 {escape_html(location)}")
 
     lines.append(f"🔗 {source}")
@@ -64,6 +78,7 @@ def build_paginated_digest(
     new_vacancies: list[Vacancy],
     *,
     channel_footer: bool = False,
+    show_remote: bool = False,
 ) -> tuple[list[str], int]:
     """Собирает вакансии в одно или несколько сообщений. Возвращает (тексты, число включённых)."""
     if not new_vacancies:
@@ -74,7 +89,7 @@ def build_paginated_digest(
     included = 0
 
     for vacancy in new_vacancies:
-        block = format_vacancy(vacancy)
+        block = format_vacancy(vacancy, show_remote=show_remote)
         if len(SEPARATOR.join(parts + [block])) <= TELEGRAM_MAX_LENGTH:
             parts.append(block)
             included += 1

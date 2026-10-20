@@ -87,7 +87,8 @@ class VacancyDatabase:
                     user_id INTEGER PRIMARY KEY,
                     role TEXT NOT NULL,
                     subscribed_at TEXT NOT NULL,
-                    active INTEGER NOT NULL DEFAULT 1
+                    active INTEGER NOT NULL DEFAULT 1,
+                    include_remote INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE TABLE IF NOT EXISTS subscriber_sent (
@@ -108,6 +109,15 @@ class VacancyDatabase:
                 );
                 """
             )
+
+            subscriber_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(subscribers)")
+            }
+            if "include_remote" not in subscriber_columns:
+                conn.execute(
+                    "ALTER TABLE subscribers "
+                    "ADD COLUMN include_remote INTEGER NOT NULL DEFAULT 0"
+                )
 
             self._migrate_subscriber_roles(conn)
 
@@ -314,7 +324,7 @@ class VacancyDatabase:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT user_id, role, subscribed_at, active
+                SELECT user_id, role, subscribed_at, active, include_remote
                 FROM subscribers
                 WHERE user_id = ? AND active = 1
                 """,
@@ -323,8 +333,34 @@ class VacancyDatabase:
             if not row:
                 return None
             data = dict(row)
+            data["include_remote"] = bool(row["include_remote"])
             data["roles"] = self.get_subscriber_roles(user_id)
             return data
+
+    def get_include_remote(self, user_id: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT include_remote FROM subscribers WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+            return bool(row["include_remote"]) if row else False
+
+    def set_include_remote(self, user_id: int, value: bool) -> None:
+        """Фильтр можно включить до подписки — тогда заводим неактивную строку.
+
+        Историю `subscriber_sent` намеренно не трогаем: смена фильтра не должна
+        приводить к повторной рассылке уже отправленного (в отличие от смены ролей).
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO subscribers (user_id, role, subscribed_at, active, include_remote)
+                VALUES (?, '', ?, 0, ?)
+                ON CONFLICT(user_id) DO UPDATE SET include_remote = excluded.include_remote
+                """,
+                (user_id, now, int(value)),
+            )
 
     def deactivate_subscriber(self, user_id: int) -> None:
         with self._connect() as conn:
@@ -337,7 +373,7 @@ class VacancyDatabase:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT user_id, role, subscribed_at
+                SELECT user_id, role, subscribed_at, include_remote
                 FROM subscribers
                 WHERE active = 1
                 ORDER BY user_id
@@ -346,6 +382,7 @@ class VacancyDatabase:
             result = []
             for row in rows:
                 data = dict(row)
+                data["include_remote"] = bool(row["include_remote"])
                 data["roles"] = self.get_subscriber_roles(int(row["user_id"]))
                 if not data["roles"] and data.get("role"):
                     data["roles"] = [data["role"]]

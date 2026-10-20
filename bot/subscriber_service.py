@@ -16,6 +16,7 @@ from bot.models import Vacancy
 from bot.roles import get_role
 from bot.russian import format_digest_roles_label
 from bot.subscriber_collect import collect_for_role
+from bot.subscriber_filters import apply_remote_filter
 from bot.subscriber_formatters import format_subscriber_digest
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,7 @@ class SubscriberService:
 
             try:
                 vacancies, fresh = self._merge_for_roles(cache, role_ids)
+                vacancies, fresh = self._apply_user_filters(user_id, row, vacancies, fresh)
                 logger.info(
                     "Подписчик %s roles=%s: найдено=%s, свежих=%s",
                     user_id,
@@ -99,6 +101,7 @@ class SubscriberService:
                 continue
 
             vacancies, fresh = self._merge_for_roles(cache, role_ids)
+            vacancies, fresh = self._apply_user_filters(user_id, row, vacancies, fresh)
             label = format_digest_roles_label(role_ids)
             logger.info(
                 "PREVIEW user=%s roles=%s %s: собрано=%s, свежих=%s",
@@ -190,6 +193,31 @@ class SubscriberService:
         vacancies = list(merged.values())
         fresh = self._filter_fresh(vacancies)
         return vacancies, fresh
+
+    def _apply_user_filters(
+        self,
+        user_id: int,
+        row: dict,
+        vacancies: list[Vacancy],
+        fresh: list[Vacancy],
+    ) -> tuple[list[Vacancy], list[Vacancy]]:
+        """Персональные фильтры — после общего сбора, чтобы кэш ролей был общим."""
+        if not row.get("include_remote"):
+            return vacancies, fresh
+
+        outcome = apply_remote_filter(fresh, include_remote=True)
+        if outcome.dropped_total:
+            logger.info(
+                "Подписчик %s: фильтр «только удалёнка» отсеял %s из %s "
+                "(офис=%s, формат не указан=%s)",
+                user_id,
+                outcome.dropped_total,
+                len(fresh),
+                outcome.dropped_onsite,
+                outcome.dropped_unknown,
+            )
+        filtered_all = apply_remote_filter(vacancies, include_remote=True).kept
+        return filtered_all, outcome.kept
 
     def _filter_fresh(self, vacancies: Iterable[Vacancy]) -> list[Vacancy]:
         return [

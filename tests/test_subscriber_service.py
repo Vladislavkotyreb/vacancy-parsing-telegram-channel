@@ -182,3 +182,111 @@ class SubscriberServiceTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _remote_vacancy(role_id: str, n: int, is_remote) -> Vacancy:
+    vacancy = _vacancy(role_id, n)
+    vacancy.is_remote = is_remote
+    return vacancy
+
+
+class RemoteFilterInDigestTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.db_path = Path(tempfile.mkdtemp()) / "test.db"
+        self.db = VacancyDatabase(self.db_path)
+        self.settings = _settings(self.db_path)
+        self.bot = AsyncMock()
+        self.service = SubscriberService(self.settings, self.db, self.bot)
+        self.calls: list[str] = []
+
+    async def _collect_mixed(self, settings, role):
+        """Удалённая, офисная и без указания формата."""
+        self.calls.append(role.id)
+        return [
+            _remote_vacancy(role.id, 1, True),
+            _remote_vacancy(role.id, 2, False),
+            _remote_vacancy(role.id, 3, None),
+        ]
+
+    def _patch(self):
+        return mock.patch(
+            "bot.subscriber_service.collect_for_role", side_effect=self._collect_mixed
+        )
+
+    def _text_for(self, chat_id: int) -> str:
+        for call in self.bot.send_message.await_args_list:
+            if call.kwargs["chat_id"] == chat_id:
+                return call.kwargs["text"]
+        return ""
+
+    async def test_filter_off_delivers_everything(self):
+        self.db.set_subscriber_roles(2001, ["product_designer"])
+
+        with self._patch():
+            await self.service.run_daily_digests()
+
+        text = self._text_for(2001)
+        self.assertIn("product_designer 1", text)
+        self.assertIn("product_designer 2", text)
+        self.assertIn("product_designer 3", text)
+
+    async def test_filter_on_delivers_only_remote(self):
+        self.db.set_subscriber_roles(2002, ["product_designer"])
+        self.db.set_include_remote(2002, True)
+
+        with self._patch():
+            await self.service.run_daily_digests()
+
+        text = self._text_for(2002)
+        self.assertIn("product_designer 1", text)
+        self.assertNotIn("product_designer 2", text)
+        self.assertNotIn("product_designer 3", text)
+
+    async def test_different_filters_still_collect_once(self):
+        """Фильтр персональный, но сбор общий — кэш по ролям ломаться не должен."""
+        self.db.set_subscriber_roles(2003, ["product_designer"])
+        self.db.set_subscriber_roles(2004, ["product_designer"])
+        self.db.set_include_remote(2004, True)
+
+        with self._patch():
+            await self.service.run_daily_digests()
+
+        self.assertEqual(self.calls, ["product_designer"])
+
+    async def test_nothing_matches_sends_nothing(self):
+        async def only_onsite(settings, role):
+            self.calls.append(role.id)
+            return [_remote_vacancy(role.id, 9, False)]
+
+        self.db.set_subscriber_roles(2005, ["product_designer"])
+        self.db.set_include_remote(2005, True)
+
+        with mock.patch(
+            "bot.subscriber_service.collect_for_role", side_effect=only_onsite
+        ):
+            stats = await self.service.run_daily_digests()
+
+        self.assertEqual(stats.messages, 0)
+        self.bot.send_message.assert_not_awaited()
+
+    async def test_filtered_out_vacancy_is_not_marked_sent(self):
+        """Иначе выключив фильтр, пользователь никогда не увидит эти вакансии."""
+        self.db.set_subscriber_roles(2006, ["product_designer"])
+        self.db.set_include_remote(2006, True)
+
+        with self._patch():
+            await self.service.run_daily_digests()
+
+        onsite = _remote_vacancy("product_designer", 2, False)
+        self.assertFalse(self.db.is_sent_to_subscriber(2006, onsite.uid))
+
+    async def test_preview_respects_filter(self):
+        self.db.set_subscriber_roles(2007, ["product_designer"])
+        self.db.set_include_remote(2007, True)
+
+        with self._patch():
+            with self.assertLogs("bot.subscriber_service", level="INFO") as logs:
+                await self.service.preview_digests()
+
+        preview = [line for line in logs.output if "user=2007" in line]
+        self.assertTrue(any("отправим 1 вакансий" in line for line in preview), preview)

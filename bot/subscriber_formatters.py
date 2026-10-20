@@ -43,4 +43,5 @@ def format_subscriber_digest(
         format_subscriber_header(role_label, len(new_vacancies), total_found, max_age_hours),
         new_vacancies,
         channel_footer=False,
+        show_remote=True,
     )

@@ -17,6 +17,10 @@ class Vacancy:
     published_at: Optional[datetime] = None
     work_format: Optional[str] = None
     grade: Optional[str] = None
+    # True — удалённая, False — точно не удалённая, None — площадка не сказала.
+    # Различие True/None нужно логам: иначе «фильтр всё отсеял» неотличимо от
+    # «источник не отдаёт формат работы».
+    is_remote: Optional[bool] = None
 
     @property
     def uid(self) -> str:

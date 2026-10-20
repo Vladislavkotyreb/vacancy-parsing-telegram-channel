@@ -41,11 +41,17 @@ BTN_MY_SUBSCRIPTION = "Мои вакансии"
 BTN_UNSUBSCRIBE = "Прекратить рассылку"
 BTN_CHOOSE_ROLES = "Выбрать роли"
 BTN_CHOOSE_ROLES_AGAIN = "Выбрать роли заново"
+BTN_FILTERS = "Фильтры"
 
 S1_CAT = "s1:cat:"
 S2_ROLE = "s2:role:"  # s2:role:<category_id>:<role_id>
 S2_SAVE = "s2:save:"  # s2:save:<category_id>
 S2_BACK = "s2:back"
+
+# Фильтры. В callback_data едет НУЖНОЕ действие, а не текущее состояние, — тогда
+# повторный тап по устаревшей клавиатуре не переключает флаг вслепую.
+F_REMOTE = "f:remote:"  # f:remote:on | f:remote:off
+F_DONE = "f:done"
 
 # Префикс отмеченной роли в клавиатуре — он же признак «роль в черновике».
 MARK = "✓ "
@@ -134,6 +140,7 @@ def main_menu_keyboard(subscribed: bool = False) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_MY_SUBSCRIPTION)],
+            [KeyboardButton(text=BTN_FILTERS)],
             [KeyboardButton(text=BTN_UNSUBSCRIBE)],
             [KeyboardButton(text=_choose_roles_button(subscribed))],
         ],
@@ -182,6 +189,42 @@ def vacancy_keyboard(category_id: str, draft: set[str]) -> InlineKeyboardMarkup:
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def filters_keyboard(include_remote: bool) -> InlineKeyboardMarkup:
+    mark = MARK if include_remote else ""
+    next_action = "off" if include_remote else "on"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"{mark}Только удалёнка",
+                    callback_data=f"{F_REMOTE}{next_action}",
+                )
+            ],
+            [InlineKeyboardButton(text="Готово", callback_data=F_DONE)],
+        ]
+    )
+
+
+def _filters_text(include_remote: bool) -> str:
+    if include_remote:
+        return (
+            "<b>Фильтры</b>\n"
+            "Сейчас: <b>только удалённые вакансии</b>.\n\n"
+            "В дни, когда удалёнки по твоим ролям нет, сообщения не будет — "
+            "это не поломка бота.\n"
+            "Вакансии, где площадка не указала формат работы, тоже не придут."
+        )
+    return (
+        "<b>Фильтры</b>\n"
+        "Сейчас: <b>без фильтра</b> — присылаю все вакансии по твоим ролям.\n\n"
+        "Нажми «Только удалёнка», чтобы получать лишь удалённые."
+    )
+
+
+def _filter_summary(include_remote: bool) -> str:
+    return "только удалёнка" if include_remote else "без фильтра"
 
 
 def _specialty_step_text() -> str:
@@ -275,9 +318,12 @@ async def send_subscription_info(message: Message, db: VacancyDatabase) -> None:
         return
 
     roles_text = format_subscription_roles(subscriber["roles"])
+    filter_text = _filter_summary(bool(subscriber.get("include_remote")))
     await message.answer(
         f"Текущая подписка: <b>{roles_text}</b>\n"
-        f"Изменить — «{BTN_CHOOSE_ROLES_AGAIN}»\n"
+        f"Фильтр: <b>{filter_text}</b>\n"
+        f"Изменить роли — «{BTN_CHOOSE_ROLES_AGAIN}»\n"
+        f"Изменить фильтр — «{BTN_FILTERS}»\n"
         "Отписаться — «Прекратить рассылку»",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(subscribed=True),
@@ -323,6 +369,18 @@ async def btn_my_subscription(message: Message, db: VacancyDatabase) -> None:
 @router.message(F.text == BTN_UNSUBSCRIBE)
 async def btn_unsubscribe(message: Message, db: VacancyDatabase) -> None:
     await unsubscribe_user(message, db)
+
+
+@router.message(F.text == BTN_FILTERS)
+async def btn_filters(message: Message, db: VacancyDatabase) -> None:
+    if not message.from_user:
+        return
+    include_remote = db.get_include_remote(message.from_user.id)
+    await message.answer(
+        _filters_text(include_remote),
+        parse_mode="HTML",
+        reply_markup=filters_keyboard(include_remote),
+    )
 
 
 @router.message(Command("stop"))
@@ -448,6 +506,39 @@ async def s2_save(callback: CallbackQuery, db: VacancyDatabase) -> None:
     await callback.message.answer(
         "Меню 👇",
         reply_markup=main_menu_keyboard(subscribed=True),
+    )
+
+
+# --- Фильтры: тумблер пишет в БД сразу, черновика нет ---
+
+@router.callback_query(F.data.startswith(F_REMOTE))
+async def cb_toggle_remote(callback: CallbackQuery, db: VacancyDatabase) -> None:
+    if not callback.data or not callback.from_user or not callback.message:
+        return
+
+    include_remote = callback.data[len(F_REMOTE) :] == "on"
+    db.set_include_remote(callback.from_user.id, include_remote)
+
+    await callback.answer(
+        "Только удалёнка включена" if include_remote else "Фильтр выключен"
+    )
+    await callback.message.edit_text(
+        _filters_text(include_remote),
+        parse_mode="HTML",
+        reply_markup=filters_keyboard(include_remote),
+    )
+
+
+@router.callback_query(F.data == F_DONE)
+async def cb_filters_done(callback: CallbackQuery, db: VacancyDatabase) -> None:
+    if not callback.from_user or not callback.message:
+        return
+
+    include_remote = db.get_include_remote(callback.from_user.id)
+    await callback.answer()
+    await callback.message.edit_text(
+        f"Фильтр сохранён: <b>{_filter_summary(include_remote)}</b>.",
+        parse_mode="HTML",
     )
 
 

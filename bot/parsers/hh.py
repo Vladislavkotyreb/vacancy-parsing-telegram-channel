@@ -252,8 +252,11 @@ class HHParser(BaseParser):
 
         work_format = None
         schedule = item.get("schedule", {}) or {}
-        if schedule.get("id") == "remote":
+        schedule_id = schedule.get("id")
+        if schedule_id == "remote":
             work_format = "Удалённо"
+        # Нет schedule — это «неизвестно», а не «не удалёнка».
+        is_remote = (schedule_id == "remote") if schedule_id else None
 
         published_at = None
         if published := item.get("published_at"):
@@ -274,6 +277,7 @@ class HHParser(BaseParser):
             published_at=published_at,
             work_format=work_format,
             grade=resolve_grade(title, hh_experience_id),
+            is_remote=is_remote,
         )
 
     @staticmethod

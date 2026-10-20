@@ -54,6 +54,8 @@ class GeekJobParser(BaseParser):
             return None
 
         job_format = item.get("jobFormat") or {}
+        # Нет jobFormat — «неизвестно»; есть, но без remote — «точно не удалёнка».
+        is_remote = bool(job_format.get("remote")) if job_format else None
         formats = []
         if job_format.get("remote"):
             formats.append("Удалённо")
@@ -89,4 +91,5 @@ class GeekJobParser(BaseParser):
             location=location,
             work_format=", ".join(formats) if formats else None,
             published_at=published_at,
+            is_remote=is_remote,
         )
