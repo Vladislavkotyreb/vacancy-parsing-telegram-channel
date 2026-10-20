@@ -37,7 +37,12 @@ from bot.database import VacancyDatabase
 from bot.role_categories import CATEGORIES, CATEGORY_IDS, get_category
 from bot.roles import ROLES
 from bot.russian import format_subscription_roles, format_success_roles
-from bot.stats import format_admin_stats, format_users_page, users_page_count
+from bot.stats import (
+    USERS_PAGE_SIZE,
+    format_admin_stats,
+    format_users_page,
+    users_page_count,
+)
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -53,6 +58,8 @@ S2_ROLE = "s2:role:"  # s2:role:<category_id>:<role_id>
 S2_SAVE = "s2:save:"  # s2:save:<category_id>
 S2_BACK = "s2:back"
 ADMIN_USERS_PAGE = "adm:users:"  # adm:users:<page>
+PROFILE_FETCH_CONCURRENCY = 5
+PROFILE_FETCH_TIMEOUT_SEC = 5
 
 # Префикс отмеченной роли в клавиатуре — он же признак «роль в черновике».
 MARK = "✓ "
@@ -515,30 +522,76 @@ def users_keyboard(page: int, pages: int) -> Optional[InlineKeyboardMarkup]:
     return InlineKeyboardMarkup(inline_keyboard=[row])
 
 
-def _users_view(db: VacancyDatabase, settings: Settings, page: int) -> tuple[str, Optional[InlineKeyboardMarkup]]:
+async def _fill_missing_profiles(bot: Bot, db: VacancyDatabase, users: list[dict]) -> None:
+    """Имена для тех, кого бот знает только по id, — через getChat.
+
+    Подписчик, который после подписки ничего не нажимает, иначе получит имя
+    только со следующей рассылкой, а отписавшийся — никогда. Найденное
+    сохраняется, поэтому повторные открытия страницы запросов не делают.
+    """
+    missing = [user for user in users if not user["first_name"] and not user["username"]]
+    if not missing:
+        return
+
+    semaphore = asyncio.Semaphore(PROFILE_FETCH_CONCURRENCY)
+
+    async def fetch(user: dict) -> None:
+        async with semaphore:
+            try:
+                chat = await asyncio.wait_for(
+                    bot.get_chat(user["user_id"]), PROFILE_FETCH_TIMEOUT_SEC
+                )
+            except Exception as exc:
+                # Не страшно: строка останется с id, список всё равно покажем.
+                logger.info("getChat %s не отдал профиль: %s", user["user_id"], exc)
+                return
+
+        user.update(
+            username=chat.username, first_name=chat.first_name, last_name=chat.last_name
+        )
+        try:
+            db.upsert_user_profile(
+                user["user_id"], chat.username, chat.first_name, chat.last_name
+            )
+        except Exception:
+            logger.exception("Не удалось сохранить профиль %s", user["user_id"])
+
+    await asyncio.gather(*(fetch(user) for user in missing))
+
+
+async def _users_view(
+    bot: Bot, db: VacancyDatabase, settings: Settings, page: int
+) -> tuple[str, Optional[InlineKeyboardMarkup]]:
     users = db.list_users()
     pages = users_page_count(len(users))
     page = min(max(page, 1), pages)
+    start = (page - 1) * USERS_PAGE_SIZE
+    # Срез держит те же словари, так что найденные имена попадут и в вывод.
+    await _fill_missing_profiles(bot, db, users[start:start + USERS_PAGE_SIZE])
     text = format_users_page(users, page, settings.timezone, settings.telegram_admin_id)
     return text, users_keyboard(page, pages)
 
 
 @router.message(Command("users"))
-async def cmd_users(message: Message, db: VacancyDatabase, settings: Settings) -> None:
+async def cmd_users(
+    message: Message, db: VacancyDatabase, settings: Settings, bot: Bot
+) -> None:
     if not message.from_user:
         return
     if not _is_admin(message.from_user.id, settings):
         await message.answer("Команда только для администратора.")
         return
 
-    text, keyboard = _users_view(db, settings, page=1)
+    text, keyboard = await _users_view(bot, db, settings, page=1)
     await message.answer(
         text, parse_mode="HTML", reply_markup=keyboard, disable_web_page_preview=True
     )
 
 
 @router.callback_query(F.data.startswith(ADMIN_USERS_PAGE))
-async def cb_users_page(callback: CallbackQuery, db: VacancyDatabase, settings: Settings) -> None:
+async def cb_users_page(
+    callback: CallbackQuery, db: VacancyDatabase, settings: Settings, bot: Bot
+) -> None:
     if not callback.data or not callback.message or not callback.from_user:
         return
     if not _is_admin(callback.from_user.id, settings):
@@ -550,8 +603,8 @@ async def cb_users_page(callback: CallbackQuery, db: VacancyDatabase, settings: 
     except ValueError:
         page = 1
 
-    text, keyboard = _users_view(db, settings, page)
     await callback.answer()
+    text, keyboard = await _users_view(bot, db, settings, page)
     await callback.message.edit_text(
         text, parse_mode="HTML", reply_markup=keyboard, disable_web_page_preview=True
     )

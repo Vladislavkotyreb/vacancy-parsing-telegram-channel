@@ -163,7 +163,7 @@ def _format_when(iso_utc: Optional[str], tz: ZoneInfo, today) -> Optional[str]:
 
 def _user_name(user: dict) -> str:
     name = " ".join(part for part in (user["first_name"], user["last_name"]) if part)
-    return name[:40] if name else f"id {user['user_id']}"
+    return name[:40] if name else "Без имени"
 
 
 def _user_status(user: dict, tz: ZoneInfo, today) -> str:
@@ -207,11 +207,15 @@ def format_users_page(
     start = (page - 1) * page_size
     for number, user in enumerate(users[start:start + page_size], start=start + 1):
         name = escape_html(_user_name(user))
+        # Ссылку tg://user Телеграм молча убирает, если у человека закрыта
+        # пересылка сообщений. @username кликабелен всегда, а id в <code>
+        # копируется по тапу и не принимается клиентом за номер телефона.
         title = f'{number}. <a href="tg://user?id={user["user_id"]}">{name}</a>'
         if user["username"]:
             title += f" @{escape_html(user['username'])}"
         if admin_id is not None and user["user_id"] == admin_id:
             title += " (вы)"
+        title += f" · <code>{user['user_id']}</code>"
 
         details = _user_status(user, tz, today)
         seen = _format_when(user["last_seen_at"], tz, today)

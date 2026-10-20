@@ -21,6 +21,7 @@ except ImportError:
 from bot.chat_main import (
     ADMIN_USERS_PAGE,
     TrackActivityMiddleware,
+    _users_view,
     cb_users_page,
     cmd_users,
     users_keyboard,
@@ -284,7 +285,9 @@ class FormattingTest(DbTestCase):
         self.assertIn("&lt;b&gt;Хакер&lt;/b&gt;", text)
         self.assertNotIn("<b>Хакер</b>", text)
         self.assertIn("заблокировал бота сегодня", text)
-        self.assertIn("id 30", text)
+        self.assertIn("Без имени", text)
+        self.assertIn("<code>30</code>", text, "id копируется и не похож на телефон")
+        self.assertIn("<code>20</code>", text)
         self.assertIn("не подписан", text)
         self.assertIn("был сегодня", text)
         self.assertIn('href="tg://user?id=20"', text)
@@ -323,29 +326,90 @@ class AdminAccessTest(unittest.IsolatedAsyncioTestCase):
         self.db_path = Path(tempfile.mkdtemp()) / "test.db"
         self.db = VacancyDatabase(self.db_path)
         self.settings = _settings(self.db_path)
+        self.bot = AsyncMock()
 
     async def test_users_command_is_admin_only(self):
         stranger = SimpleNamespace(from_user=SimpleNamespace(id=999), answer=AsyncMock())
-        await cmd_users(stranger, self.db, self.settings)
+        await cmd_users(stranger, self.db, self.settings, self.bot)
         self.assertIn("только для администратора", stranger.answer.await_args.args[0])
 
         admin = SimpleNamespace(from_user=SimpleNamespace(id=ADMIN), answer=AsyncMock())
-        await cmd_users(admin, self.db, self.settings)
+        await cmd_users(admin, self.db, self.settings, self.bot)
         self.assertIn("Пользователи", admin.answer.await_args.args[0])
 
     async def test_users_paging_is_admin_only(self):
         message = SimpleNamespace(edit_text=AsyncMock())
         stranger = SimpleNamespace(data=f"{ADMIN_USERS_PAGE}2", message=message,
                                    from_user=SimpleNamespace(id=999), answer=AsyncMock())
-        await cb_users_page(stranger, self.db, self.settings)
+        await cb_users_page(stranger, self.db, self.settings, self.bot)
         message.edit_text.assert_not_awaited()
         self.assertTrue(stranger.answer.await_args.kwargs.get("show_alert"))
 
     async def test_no_admin_configured_means_nobody(self):
         settings = _settings(self.db_path, admin_id=None)
         anyone = SimpleNamespace(from_user=SimpleNamespace(id=ADMIN), answer=AsyncMock())
-        await cmd_users(anyone, self.db, settings)
+        await cmd_users(anyone, self.db, settings, self.bot)
         self.assertIn("только для администратора", anyone.answer.await_args.args[0])
+
+
+class ProfileBackfillTest(unittest.IsolatedAsyncioTestCase):
+    """Имена для тех, кого бот знает только по id: после подписки молчат или ушли."""
+
+    async def asyncSetUp(self) -> None:
+        self.db_path = Path(tempfile.mkdtemp()) / "test.db"
+        self.db = VacancyDatabase(self.db_path)
+        self.settings = _settings(self.db_path)
+        self.bot = AsyncMock()
+        self.bot.get_chat.side_effect = lambda uid: SimpleNamespace(
+            username=f"user{uid}", first_name=f"Имя{uid}", last_name=None
+        )
+
+    def asked(self) -> list:
+        return sorted(c.args[0] for c in self.bot.get_chat.await_args_list)
+
+    async def test_fetches_only_nameless_and_saves(self):
+        self.db.set_subscriber_roles(10, ["qa_manual"])                     # без профиля
+        self.db.set_subscriber_roles(11, ["qa_manual"])
+        self.db.record_activity(11, "known", "Известный", None, day="2026-10-21")
+
+        text, _ = await _users_view(self.bot, self.db, self.settings, page=1)
+
+        self.assertEqual(self.asked(), [10])
+        self.assertIn("Имя10", text)
+        self.assertIn("@user10", text)
+        stored = {u["user_id"]: u for u in self.db.list_users()}
+        self.assertEqual(stored[10]["first_name"], "Имя10")
+        self.assertIsNone(stored[10]["last_seen_at"], "это не активность")
+
+    async def test_second_view_makes_no_requests(self):
+        self.db.set_subscriber_roles(10, ["qa_manual"])
+        await _users_view(self.bot, self.db, self.settings, page=1)
+        self.bot.get_chat.reset_mock()
+
+        await _users_view(self.bot, self.db, self.settings, page=1)
+        self.bot.get_chat.assert_not_awaited()
+
+    async def test_only_current_page_is_fetched(self):
+        for uid in range(100, 145):                                          # 3 страницы по 20
+            self.db.set_subscriber_roles(uid, ["qa_manual"])
+
+        await _users_view(self.bot, self.db, self.settings, page=3)
+        self.assertEqual(len(self.asked()), 5)
+
+    async def test_failed_lookup_still_shows_list(self):
+        self.db.set_subscriber_roles(10, ["qa_manual"])
+        self.db.set_subscriber_roles(11, ["qa_manual"])
+
+        def flaky(uid):
+            if uid == 10:
+                raise RuntimeError("chat not found")
+            return SimpleNamespace(username="ok", first_name="Нашёлся", last_name=None)
+        self.bot.get_chat.side_effect = flaky
+
+        text, _ = await _users_view(self.bot, self.db, self.settings, page=1)
+        self.assertIn("Нашёлся", text)
+        self.assertIn("Без имени", text)
+        self.assertIn("<code>10</code>", text)
 
 
 class DigestSideEffectsTest(unittest.IsolatedAsyncioTestCase):
