@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import Iterable, Optional
 
 from aiogram import Bot
 from aiogram.enums import ParseMode
+from aiogram.types import Message
 from aiogram.exceptions import TelegramForbiddenError, TelegramNetworkError, TelegramRetryAfter
 
 from bot.config import Settings
@@ -74,7 +75,7 @@ class SubscriberService:
                 await asyncio.sleep(0.05)
             except TelegramForbiddenError:
                 logger.warning("Подписчик %s заблокировал бота — отписываем", user_id)
-                self.db.deactivate_subscriber(user_id)
+                self.db.deactivate_subscriber(user_id, reason="blocked")
             except Exception:
                 logger.exception("Ошибка рассылки подписчику %s", user_id)
 
@@ -234,13 +235,16 @@ class SubscriberService:
             )
             return 0
 
+        delivered: Optional[Message] = None
         for message in messages:
-            await self._safe_send(user_id, message)
+            delivered = await self._safe_send(user_id, message) or delivered
             if len(messages) > 1:
                 await asyncio.sleep(0.4)
 
         for vacancy in to_post:
             self.db.mark_sent_to_subscriber(user_id, vacancy)
+
+        self._remember_profile(user_id, delivered)
 
         logger.info(
             "Подписчик %s roles=%s: отправлено %s вакансий",
@@ -250,17 +254,33 @@ class SubscriberService:
         )
         return len(messages)
 
-    async def _safe_send(self, chat_id: int, text: str) -> None:
+    def _remember_profile(self, user_id: int, delivered: Optional[Message]) -> None:
+        """Имя и username из ответа Телеграма на рассылку — для /users.
+
+        Большинство подписчиков после подписки в боте ничего не нажимают, и
+        другого способа узнать их имена без лишних запросов нет. Отметкой
+        активности это не считается: получить дайджест — не значит им пользоваться.
+        """
+        chat = getattr(delivered, "chat", None)
+        if chat is None or getattr(chat, "type", None) != "private":
+            return
+        try:
+            self.db.upsert_user_profile(
+                user_id, chat.username, chat.first_name, chat.last_name
+            )
+        except Exception:
+            logger.exception("Не удалось сохранить профиль подписчика %s", user_id)
+
+    async def _safe_send(self, chat_id: int, text: str) -> Optional[Message]:
         network_retries = 0
         while True:
             try:
-                await self.bot.send_message(
+                return await self.bot.send_message(
                     chat_id=chat_id,
                     text=text,
                     parse_mode=ParseMode.HTML,
                     disable_web_page_preview=False,
                 )
-                return
             except TelegramRetryAfter as exc:
                 await asyncio.sleep(exc.retry_after + 1)
             except TelegramNetworkError as exc:

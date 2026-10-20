@@ -1,10 +1,21 @@
 from __future__ import annotations
 
+import math
+from datetime import datetime, timedelta
 from typing import Optional
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
 
 from bot.database import VacancyDatabase
 from bot.formatters import escape_html
 from bot.roles import ROLES
+from bot.russian import format_subscription_roles
+
+USERS_PAGE_SIZE = 20
+TELEGRAM_MAX_LENGTH = 4096
 
 
 def _role_label(role_id: str) -> str:
@@ -19,9 +30,13 @@ def _period_title(days: Optional[int]) -> str:
 
 
 def format_admin_stats(
-    db: VacancyDatabase, timezone_name: str, days: Optional[int] = None
+    db: VacancyDatabase,
+    timezone_name: str,
+    days: Optional[int] = None,
+    exclude_user_id: Optional[int] = None,
 ) -> str:
     period_label = _period_title(days)
+    audience = db.audience_stats(timezone_name, exclude_user_id=exclude_user_id)
     active = db.count_active_subscribers()
     role_counts = db.subscriber_role_counts()
     delivery = db.subscriber_delivery_stats(timezone_name, days=days)
@@ -34,6 +49,8 @@ def format_admin_stats(
 
     lines = [
         f"📊 <b>Статистика {period_label}</b>",
+        "",
+        *_audience_lines(audience),
         "",
         "<b>Подписчики</b>",
         f"• Активных: <b>{active}</b>",
@@ -88,3 +105,123 @@ def format_admin_stats(
     )
 
     return "\n".join(lines)
+
+
+def _audience_lines(audience: dict) -> list[str]:
+    dau, mau = audience["dau"], audience["mau"]
+    stickiness = f"{round(dau / mau * 100)}%" if mau else "—"
+
+    lines = [
+        "<b>Аудитория</b>",
+        f"• Активные сегодня (DAU): <b>{dau}</b>",
+        f"• Активные за 30 дней (MAU): <b>{mau}</b> · DAU/MAU {stickiness}",
+        f"• Получили дайджест: сегодня <b>{audience['reach_today']}</b>"
+        f" · за 30 дней <b>{audience['reach_month']}</b>",
+        f"• Новые подписки: сегодня {audience['new_today']}"
+        f" · за 7 дн. {audience['new_week']} · за 30 дн. {audience['new_month']}",
+        f"• Отписались: за 7 дн. {audience['left_week']}"
+        f" · за 30 дн. {audience['left_month']}"
+        f" (из них заблокировали бота: {audience['blocked_month']})",
+    ]
+
+    since = audience["tracking_since"]
+    if since:
+        lines.append(
+            f"<i>Активные — те, кто что-то делал в боте; учёт ведётся с "
+            f"{_format_day(since)}. Получившие дайджест — с начала рассылок. "
+            f"Админ в подсчёт не входит.</i>"
+        )
+    else:
+        lines.append(
+            "<i>Активность ещё не записана: счёт DAU/MAU начнётся с первых "
+            "действий в боте после обновления.</i>"
+        )
+    return lines
+
+
+def _format_day(day_iso: str) -> str:
+    year, month, day = day_iso.split("-")
+    return f"{day}.{month}.{year}"
+
+
+def _local_date(iso_utc: Optional[str], tz: ZoneInfo):
+    if not iso_utc:
+        return None
+    return datetime.fromisoformat(iso_utc).astimezone(tz).date()
+
+
+def _format_when(iso_utc: Optional[str], tz: ZoneInfo, today) -> Optional[str]:
+    day = _local_date(iso_utc, tz)
+    if day is None:
+        return None
+    if day == today:
+        return "сегодня"
+    if day == today - timedelta(days=1):
+        return "вчера"
+    return day.strftime("%d.%m.%Y")
+
+
+def _user_name(user: dict) -> str:
+    name = " ".join(part for part in (user["first_name"], user["last_name"]) if part)
+    return name[:40] if name else f"id {user['user_id']}"
+
+
+def _user_status(user: dict, tz: ZoneInfo, today) -> str:
+    if user["active"] is None:
+        return "не подписан"
+    if user["active"]:
+        roles = format_subscription_roles(user["roles"]) if user["roles"] else "без ролей"
+        since = _format_when(user["subscribed_at"], tz, today)
+        return f"{escape_html(roles)} · с {since}" if since else escape_html(roles)
+
+    verb = "заблокировал бота" if user["unsubscribe_reason"] == "blocked" else "отписался"
+    when = _format_when(user["unsubscribed_at"], tz, today)
+    return f"{verb} {when}" if when else verb
+
+
+def users_page_count(total: int, page_size: int = USERS_PAGE_SIZE) -> int:
+    return max(1, math.ceil(total / page_size))
+
+
+def format_users_page(
+    users: list[dict],
+    page: int,
+    timezone_name: str,
+    admin_id: Optional[int] = None,
+    page_size: int = USERS_PAGE_SIZE,
+) -> str:
+    """Страница списка пользователей для админа. page — с единицы."""
+    tz = ZoneInfo(timezone_name)
+    today = datetime.now(tz).date()
+    pages = users_page_count(len(users), page_size)
+    page = min(max(page, 1), pages)
+    subscribed = sum(1 for user in users if user["active"])
+
+    header = f"👥 <b>Пользователи</b>: {len(users)} · подписаны {subscribed}"
+    if pages > 1:
+        header += f"\nСтраница {page} из {pages}"
+    if not users:
+        return header + "\n\nПока никого — бот ещё не записал ни одного действия."
+
+    lines = [header, ""]
+    start = (page - 1) * page_size
+    for number, user in enumerate(users[start:start + page_size], start=start + 1):
+        name = escape_html(_user_name(user))
+        title = f'{number}. <a href="tg://user?id={user["user_id"]}">{name}</a>'
+        if user["username"]:
+            title += f" @{escape_html(user['username'])}"
+        if admin_id is not None and user["user_id"] == admin_id:
+            title += " (вы)"
+
+        details = _user_status(user, tz, today)
+        seen = _format_when(user["last_seen_at"], tz, today)
+        if seen:
+            details += f" · был {seen}"
+
+        lines.append(title)
+        lines.append(f"    {details}")
+
+    text = "\n".join(lines)
+    if len(text) > TELEGRAM_MAX_LENGTH:
+        text = text[: TELEGRAM_MAX_LENGTH - 1] + "…"
+    return text

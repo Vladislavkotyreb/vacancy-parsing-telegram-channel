@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
@@ -26,12 +27,17 @@ from aiogram.types import (
     TelegramObject,
 )
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
+
 from bot.config import Settings
 from bot.database import VacancyDatabase
 from bot.role_categories import CATEGORIES, CATEGORY_IDS, get_category
 from bot.roles import ROLES
 from bot.russian import format_subscription_roles, format_success_roles
-from bot.stats import format_admin_stats
+from bot.stats import format_admin_stats, format_users_page, users_page_count
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -46,6 +52,7 @@ S1_CAT = "s1:cat:"
 S2_ROLE = "s2:role:"  # s2:role:<category_id>:<role_id>
 S2_SAVE = "s2:save:"  # s2:save:<category_id>
 S2_BACK = "s2:back"
+ADMIN_USERS_PAGE = "adm:users:"  # adm:users:<page>
 
 # Префикс отмеченной роли в клавиатуре — он же признак «роль в черновике».
 MARK = "✓ "
@@ -84,6 +91,46 @@ class InjectMiddleware:
     ) -> Any:
         data.update(self.dependencies)
         return await handler(event, data)
+
+
+class TrackActivityMiddleware:
+    """Отмечает, что человек что-то сделал в боте сегодня — основа DAU/MAU.
+
+    Пишется только факт действия и профиль (имя, username), тексты сообщений
+    не храним. Ошибка записи не должна мешать боту ответить.
+    """
+
+    # Только то, что человек делает сам. Служебные апдейты вроде my_chat_member
+    # (в том числе блокировка бота) активностью не считаются.
+    TRACKED_UPDATES = ("message", "callback_query")
+
+    def __init__(self, db: VacancyDatabase, timezone_name: str) -> None:
+        self.db = db
+        self.tz = ZoneInfo(timezone_name)
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        user = data.get("event_from_user")
+        if user is not None and not user.is_bot and self._is_user_action(event):
+            try:
+                self.db.record_activity(
+                    user.id,
+                    user.username,
+                    user.first_name,
+                    user.last_name,
+                    day=datetime.now(self.tz).date().isoformat(),
+                )
+            except Exception:
+                logger.exception("Не удалось записать активность пользователя %s", user.id)
+        return await handler(event, data)
+
+    @classmethod
+    def _is_user_action(cls, event: TelegramObject) -> bool:
+        return any(getattr(event, kind, None) is not None for kind in cls.TRACKED_UPDATES)
 
 
 def _is_admin(user_id: int, settings: Settings) -> bool:
@@ -343,7 +390,9 @@ async def cmd_stats(message: Message, db: VacancyDatabase, settings: Settings) -
         await message.answer("Команда только для администратора.")
         return
 
-    text = format_admin_stats(db, settings.timezone)
+    text = format_admin_stats(
+        db, settings.timezone, exclude_user_id=settings.telegram_admin_id
+    )
     await message.answer(text, parse_mode="HTML")
 
 
@@ -451,6 +500,63 @@ async def s2_save(callback: CallbackQuery, db: VacancyDatabase) -> None:
     )
 
 
+def users_keyboard(page: int, pages: int) -> Optional[InlineKeyboardMarkup]:
+    if pages <= 1:
+        return None
+    row = []
+    if page > 1:
+        row.append(
+            InlineKeyboardButton(text="← Назад", callback_data=f"{ADMIN_USERS_PAGE}{page - 1}")
+        )
+    if page < pages:
+        row.append(
+            InlineKeyboardButton(text="Вперёд →", callback_data=f"{ADMIN_USERS_PAGE}{page + 1}")
+        )
+    return InlineKeyboardMarkup(inline_keyboard=[row])
+
+
+def _users_view(db: VacancyDatabase, settings: Settings, page: int) -> tuple[str, Optional[InlineKeyboardMarkup]]:
+    users = db.list_users()
+    pages = users_page_count(len(users))
+    page = min(max(page, 1), pages)
+    text = format_users_page(users, page, settings.timezone, settings.telegram_admin_id)
+    return text, users_keyboard(page, pages)
+
+
+@router.message(Command("users"))
+async def cmd_users(message: Message, db: VacancyDatabase, settings: Settings) -> None:
+    if not message.from_user:
+        return
+    if not _is_admin(message.from_user.id, settings):
+        await message.answer("Команда только для администратора.")
+        return
+
+    text, keyboard = _users_view(db, settings, page=1)
+    await message.answer(
+        text, parse_mode="HTML", reply_markup=keyboard, disable_web_page_preview=True
+    )
+
+
+@router.callback_query(F.data.startswith(ADMIN_USERS_PAGE))
+async def cb_users_page(callback: CallbackQuery, db: VacancyDatabase, settings: Settings) -> None:
+    if not callback.data or not callback.message or not callback.from_user:
+        return
+    if not _is_admin(callback.from_user.id, settings):
+        await callback.answer("Только для администратора", show_alert=True)
+        return
+
+    try:
+        page = int(callback.data[len(ADMIN_USERS_PAGE):])
+    except ValueError:
+        page = 1
+
+    text, keyboard = _users_view(db, settings, page)
+    await callback.answer()
+    await callback.message.edit_text(
+        text, parse_mode="HTML", reply_markup=keyboard, disable_web_page_preview=True
+    )
+
+
 @router.message()
 async def fallback(message: Message, db: VacancyDatabase) -> None:
     subscribed = _is_subscribed(message.from_user.id, db) if message.from_user else False
@@ -474,6 +580,7 @@ async def main() -> None:
 
     dp = Dispatcher()
     dp.update.middleware(InjectMiddleware(db=db, settings=settings))
+    dp.update.middleware(TrackActivityMiddleware(db, settings.timezone))
     dp.include_router(router)
 
     logger.info("Чат-бот подписок запущен (polling)")

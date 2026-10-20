@@ -6,7 +6,7 @@
 |---------|------------|-------------|
 | **Канал** [@prdsvac](https://t.me/prdsvac) | ежедневный дайджест вакансий продуктового дизайнера | `python -m bot.run_once fetch` |
 | **Подписки** | личные дайджесты в ЛС по выбранным ролям | `python -m bot.run_once subscribers` |
-| **Чат-бот** | UI подписки: выбор ролей, отписка, `/stats` | `python -m bot.chat_main` |
+| **Чат-бот** | UI подписки: выбор ролей, отписка; админка `/stats` и `/users` | `python -m bot.chat_main` |
 
 Публикуются только вакансии, появившиеся за последние **72 часа** (`MAX_VACANCY_AGE_HOURS`).
 Прод крутится на reg.ru (ISPmanager): канал в 10:00 МСК, рассылка подписчикам в 10:02.
@@ -115,7 +115,8 @@ GitHub Actions (`.github/workflows/daily-vacancies.yml`) оставлен **то
 | `/start` | Приветствие и запуск выбора ролей |
 | `/myrole` | Текущая подписка |
 | `/stop` | Отписаться |
-| `/stats` | Статистика (только для `TELEGRAM_ADMIN_ID`) |
+| `/stats` | DAU/MAU, охват рассылкой, приток и отток, плюс подписчики, рассылка и канал — только для `TELEGRAM_ADMIN_ID` |
+| `/users` | Кто пользуется ботом: имя, @username, роли, дата подписки, последняя активность — только для админа |
 
 Пользователь **обязан** написать `/start` первым — иначе Telegram не даст боту
 писать ему в личку.
@@ -140,8 +141,9 @@ bot/
   grades.py                 — грейд из названия / опыта HH
   dates.py                  — парсинг дат, свежесть, дедуп по названию+компании
   source_priority.py        — приоритет источников при дедупе
-  database.py               — SQLite: vacancies, run_log, subscribers, subscriber_roles, subscriber_sent
-  stats.py                  — сводка для /stats
+  database.py               — SQLite: vacancies, run_log, subscribers, subscriber_roles, subscriber_sent,
+                              users, user_activity
+  stats.py                  — тексты для /stats и /users
   russian.py                — склонения в текстах
   parsers/                  — hh, bigtech, geekjob, getmatch
 data/

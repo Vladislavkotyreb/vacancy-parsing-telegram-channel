@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 try:
@@ -106,8 +106,40 @@ class VacancyDatabase:
                     role TEXT NOT NULL,
                     PRIMARY KEY (user_id, role)
                 );
+
+                -- Кто пользуется ботом. first_seen_at/last_seen_at — действия в боте;
+                -- профиль без них приходит из ответа Телеграма на рассылку.
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    first_name TEXT,
+                    last_name TEXT,
+                    first_seen_at TEXT,
+                    last_seen_at TEXT
+                );
+
+                -- Одна строка на человека в день, когда он что-то сделал в боте.
+                -- day — дата в часовом поясе бота. Отсюда считаются DAU и MAU.
+                CREATE TABLE IF NOT EXISTS user_activity (
+                    user_id INTEGER NOT NULL,
+                    day TEXT NOT NULL,
+                    PRIMARY KEY (user_id, day)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_user_activity_day
+                    ON user_activity (day);
                 """
             )
+
+            subscriber_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(subscribers)")
+            }
+            # Без даты отписки отток за период не посчитать: active = 0 говорит,
+            # что человек ушёл, но не когда и почему.
+            if "unsubscribed_at" not in subscriber_columns:
+                conn.execute("ALTER TABLE subscribers ADD COLUMN unsubscribed_at TEXT")
+            if "unsubscribe_reason" not in subscriber_columns:
+                conn.execute("ALTER TABLE subscribers ADD COLUMN unsubscribe_reason TEXT")
 
             self._migrate_subscriber_roles(conn)
 
@@ -254,7 +286,9 @@ class VacancyDatabase:
                         WHEN subscribers.active = 0 THEN excluded.subscribed_at
                         ELSE subscribers.subscribed_at
                     END,
-                    active = 1
+                    active = 1,
+                    unsubscribed_at = NULL,
+                    unsubscribe_reason = NULL
                 """,
                 (user_id, primary_role, now),
             )
@@ -326,12 +360,217 @@ class VacancyDatabase:
             data["roles"] = self.get_subscriber_roles(user_id)
             return data
 
-    def deactivate_subscriber(self, user_id: int) -> None:
+    def deactivate_subscriber(self, user_id: int, reason: str = "stop") -> None:
+        """reason: "stop" — отписался сам, "blocked" — заблокировал бота."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            # Только активных: повторная деактивация не должна сдвигать дату ухода.
+            conn.execute(
+                """
+                UPDATE subscribers
+                SET active = 0, unsubscribed_at = ?, unsubscribe_reason = ?
+                WHERE user_id = ? AND active = 1
+                """,
+                (now, reason, user_id),
+            )
+
+    def record_activity(
+        self,
+        user_id: int,
+        username: Optional[str],
+        first_name: Optional[str],
+        last_name: Optional[str],
+        *,
+        day: str,
+    ) -> None:
+        """Человек что-то сделал в боте: обновить профиль и отметить день."""
+        now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
             conn.execute(
-                "UPDATE subscribers SET active = 0 WHERE user_id = ?",
-                (user_id,),
+                """
+                INSERT INTO users
+                    (user_id, username, first_name, last_name, first_seen_at, last_seen_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    username = excluded.username,
+                    first_name = excluded.first_name,
+                    last_name = excluded.last_name,
+                    first_seen_at = COALESCE(users.first_seen_at, excluded.first_seen_at),
+                    last_seen_at = excluded.last_seen_at
+                """,
+                (user_id, username, first_name, last_name, now, now),
             )
+            conn.execute(
+                "INSERT OR IGNORE INTO user_activity (user_id, day) VALUES (?, ?)",
+                (user_id, day),
+            )
+
+    def upsert_user_profile(
+        self,
+        user_id: int,
+        username: Optional[str],
+        first_name: Optional[str],
+        last_name: Optional[str],
+    ) -> None:
+        """Имя и username без отметки активности — например, из ответа на рассылку.
+
+        Так подтягиваются имена подписчиков, которые после подписки в боте больше
+        ничего не нажимают.
+        """
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO users (user_id, username, first_name, last_name)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    username = excluded.username,
+                    first_name = excluded.first_name,
+                    last_name = excluded.last_name
+                """,
+                (user_id, username, first_name, last_name),
+            )
+
+    @staticmethod
+    def _local_today(timezone_name: str, now: Optional[datetime] = None) -> date:
+        tz = ZoneInfo(timezone_name)
+        return (now.astimezone(tz) if now else datetime.now(tz)).date()
+
+    @staticmethod
+    def _local_midnight_utc(timezone_name: str, day: date) -> str:
+        midnight = datetime.combine(day, time.min, tzinfo=ZoneInfo(timezone_name))
+        return midnight.astimezone(timezone.utc).isoformat()
+
+    def audience_stats(
+        self,
+        timezone_name: str,
+        *,
+        exclude_user_id: Optional[int] = None,
+        now: Optional[datetime] = None,
+    ) -> dict:
+        """DAU/MAU, охват рассылкой, приток и отток.
+
+        Активный — что-то сделал в боте. Охват — получил хотя бы один дайджест.
+        Для бота-рассылки это разные вещи: подписчик может месяцами читать
+        дайджесты и ничего не нажимать, а прочтения Телеграм боту не сообщает.
+        """
+        today = self._local_today(timezone_name, now)
+        week_start = today - timedelta(days=6)
+        month_start = today - timedelta(days=29)  # 30 дней, включая сегодня
+
+        today_utc = self._local_midnight_utc(timezone_name, today)
+        week_utc = self._local_midnight_utc(timezone_name, week_start)
+        month_utc = self._local_midnight_utc(timezone_name, month_start)
+
+        # user_id у Телеграма положительные, так что -1 не исключает никого.
+        excluded = exclude_user_id if exclude_user_id is not None else -1
+
+        with self._connect() as conn:
+            def count(sql: str, *params: object) -> int:
+                row = conn.execute(sql, (*params, excluded)).fetchone()
+                return int(row[0] or 0)
+
+            active_users = (
+                "SELECT COUNT(DISTINCT user_id) FROM user_activity "
+                "WHERE day >= ? AND user_id != ?"
+            )
+            reached_users = (
+                "SELECT COUNT(DISTINCT user_id) FROM subscriber_sent "
+                "WHERE sent_at >= ? AND user_id != ?"
+            )
+            new_subscribers = (
+                "SELECT COUNT(*) FROM subscribers "
+                "WHERE subscribed_at >= ? AND user_id != ?"
+            )
+            left_subscribers = (
+                "SELECT COUNT(*) FROM subscribers "
+                "WHERE active = 0 AND unsubscribed_at >= ? AND user_id != ?"
+            )
+            blocked_subscribers = (
+                "SELECT COUNT(*) FROM subscribers "
+                "WHERE active = 0 AND unsubscribe_reason = 'blocked' "
+                "AND unsubscribed_at >= ? AND user_id != ?"
+            )
+
+            stats = {
+                "dau": count(active_users, today.isoformat()),
+                "mau": count(active_users, month_start.isoformat()),
+                "reach_today": count(reached_users, today_utc),
+                "reach_month": count(reached_users, month_utc),
+                "new_today": count(new_subscribers, today_utc),
+                "new_week": count(new_subscribers, week_utc),
+                "new_month": count(new_subscribers, month_utc),
+                "left_week": count(left_subscribers, week_utc),
+                "left_month": count(left_subscribers, month_utc),
+                "blocked_month": count(blocked_subscribers, month_utc),
+                "subscribers": count(
+                    "SELECT COUNT(*) FROM subscribers WHERE active = 1 AND user_id != ?"
+                ),
+            }
+            tracking_since = conn.execute(
+                "SELECT MIN(day) FROM user_activity WHERE user_id != ?",
+                (excluded,),
+            ).fetchone()[0]
+
+        stats["tracking_since"] = tracking_since
+        return stats
+
+    def list_users(self) -> list[dict]:
+        """Все, кого бот знает: кто действовал в боте и кто подписан.
+
+        Сначала недавно активные, потом по дате подписки.
+        """
+        people: dict[int, dict] = {}
+        roles: dict[int, list[str]] = {}
+
+        with self._connect() as conn:
+            for row in conn.execute(
+                "SELECT user_id, username, first_name, last_name, first_seen_at, last_seen_at "
+                "FROM users"
+            ):
+                people[row["user_id"]] = dict(row)
+
+            for row in conn.execute(
+                "SELECT user_id, role, subscribed_at, active, unsubscribed_at, unsubscribe_reason "
+                "FROM subscribers"
+            ):
+                entry = people.setdefault(row["user_id"], {"user_id": row["user_id"]})
+                entry.update(
+                    subscribed_at=row["subscribed_at"],
+                    active=bool(row["active"]),
+                    unsubscribed_at=row["unsubscribed_at"],
+                    unsubscribe_reason=row["unsubscribe_reason"],
+                    legacy_role=row["role"],
+                )
+
+            for row in conn.execute(
+                "SELECT user_id, role FROM subscriber_roles ORDER BY role"
+            ):
+                roles.setdefault(row["user_id"], []).append(row["role"])
+
+        result = []
+        for user_id, entry in people.items():
+            for key in (
+                "username",
+                "first_name",
+                "last_name",
+                "first_seen_at",
+                "last_seen_at",
+                "subscribed_at",
+                "unsubscribed_at",
+                "unsubscribe_reason",
+            ):
+                entry.setdefault(key, None)
+            # None — никогда не подписывался; False — подписывался и ушёл.
+            entry.setdefault("active", None)
+            legacy_role = entry.pop("legacy_role", None)
+            entry["roles"] = roles.get(user_id) or ([legacy_role] if legacy_role else [])
+            result.append(entry)
+
+        result.sort(
+            key=lambda e: (e["last_seen_at"] or "", e["subscribed_at"] or ""),
+            reverse=True,
+        )
+        return result
 
     def list_active_subscribers(self) -> list[dict]:
         with self._connect() as conn:
