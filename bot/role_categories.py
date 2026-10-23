@@ -51,6 +51,18 @@ CATEGORIES: dict[str, RoleCategory] = {
             "data_engineer",
             "data_analyst",
             "product_analyst",
+            "data_governance",
+        ),
+    ),
+    "leaders": RoleCategory(
+        id="leaders",
+        title="Руководители",
+        role_ids=(
+            "head_of_data",
+            "head_of_ai",
+            "head_of_design",
+            "head_of_product",
+            "head_of_engineering",
         ),
     ),
 }

@@ -256,6 +256,14 @@ class ProductAndQaCategoriesTest(unittest.TestCase):
         for role_id in ("data_scientist", "ml_engineer", "data_engineer", "data_analyst", "product_analyst"):
             self.assertIn(f"{S2_ROLE}data:{role_id}", data)
 
+    def test_leaders_category_and_governance(self):
+        labels = [btn.text for row in specialty_keyboard().inline_keyboard for btn in row]
+        self.assertIn("Руководители", labels)
+        self.assertIn(f"{S2_ROLE}data:data_governance", _callback_data(vacancy_keyboard("data", set())))
+        leaders = _callback_data(vacancy_keyboard("leaders", set()))
+        for role_id in ("head_of_data", "head_of_ai", "head_of_design", "head_of_product", "head_of_engineering"):
+            self.assertIn(f"{S2_ROLE}leaders:{role_id}", leaders)
+
     def test_draft_reads_new_categories(self):
         keyboard = vacancy_keyboard("qa", {"qa_automation"})
         self.assertEqual(_draft_from_keyboard(keyboard), {"qa_automation"})

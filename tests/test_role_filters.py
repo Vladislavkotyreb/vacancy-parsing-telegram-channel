@@ -354,3 +354,132 @@ class BackendGivesUpOnlyDataRolesTest(unittest.TestCase):
         for title in ("Product Analyst", "Продуктовый аналитик", "Data Scientist"):
             self.assertFalse(is_product_designer_vacancy(title), title)
             self.assertFalse(is_product_manager_vacancy(title), title)
+
+
+from bot.role_filters import (  # noqa: E402
+    is_data_governance_vacancy,
+    is_head_of_ai_vacancy,
+    is_head_of_data_vacancy,
+    is_head_of_design_vacancy,
+    is_head_of_engineering_vacancy,
+    is_head_of_product_vacancy,
+)
+
+
+class GovernanceAndLeadersTest(unittest.TestCase):
+    """Заголовки из живой выдачи HH за 30 дней."""
+
+    def check(self, matcher, yes=(), no=()):
+        for title in yes:
+            self.assertTrue(matcher(title), f"должно попасть: {title}")
+        for title in no:
+            self.assertFalse(matcher(title), f"не должно попасть: {title}")
+
+    def test_data_governance(self):
+        self.check(
+            is_data_governance_vacancy,
+            yes=("Data Steward (Ozon Банк)", "Методолог Data Governance (Банк)", "Аналитик качества данных",
+                 "Аналитик качества данных (Глоссарий/Дата-каталог)", "Senior MDM Specialist",
+                 "Руководитель отдела управления данными", "Директор по управлению данными (г. Баку)"),
+            no=("Специалист ИБ (DLP, антивирус, MDM)", "Менеджер по работе с клиентами (ERP, MDM, Datareon)",
+                "Специалист по управлению НСИ и обеспечению качества данных (1С, Excel)",
+                "Старший специалист 1 разряда отдела управления качеством данных",
+                "Инженер технической поддержки по управлению данными"),
+        )
+
+    def test_head_of_data(self):
+        self.check(
+            is_head_of_data_vacancy,
+            yes=("Chief Data Officer", "Chief Data Officer / Директор по данным", "Head of Data", "Head of Analytics",
+                 "Head of Data Science (fintech)", "Руководитель аналитики данных (e-com, delivery, A/B)",
+                 "Руководитель отдела аналитики данных", "Технический руководитель по данным (Платформа обслуживания)",
+                 "Руководитель направления продуктовой аналитики", "Директор по искусственному интеллекту и данным",
+                 "Руководитель отдела аналитики (Python)", "Руководитель отдела аналитики данных (метрики)"),
+            no=("Директор по цифровой трансформации / Chief Digital Officer (CDO)",
+                "Руководитель направления финансовой аналитики корпоративно-инвестиционного бизнеса",
+                "Руководитель отдела аналитики продаж", "Директор департамента аналитики (взыскание задолженности)",
+                "Директор по аналитике (Fashion)", "Руководитель группы аналитики данных (последняя миля)",
+                "Помощник руководителя — аналитик данных", "Руководитель веб-аналитики (e-commerce)",
+                "Руководитель направления аналитики Животноводство (молочное, мясное)",
+                "Руководитель отдела аналитики и аудита", "Руководитель направления аналитики и доходности"),
+        )
+
+    def test_head_of_ai(self):
+        self.check(
+            is_head_of_ai_vacancy,
+            yes=("Head of AI / Руководитель AI-направления", "Head of AI Engineering (ИТ Лидер Кластера)",
+                 "Head of ML Infrastructure & Platform", "Руководитель ML/AI-платформы", "Руководитель ИИ-направления",
+                 "Руководитель дирекции по искусственному интеллекту (AI)", "Руководитель направления по внедрению ИИ",
+                 "Директор по искусственному интеллекту и данным"),
+            no=("Руководитель отдела продаж (B2B, ИИ-решения)", "Head of Marketing (HealthTech AI-продукт)",
+                "Руководитель AI Контент-завода", "Руководитель ИИ-проектов", "Руководитель проектов ИИ",
+                "Ассистент руководителя (ИИ и автоматизация)", "Head of ML-SEO / SEO Lead (Senior+)",
+                'Руководитель отдела информационной безопасности ("MWS AI")',
+                "Руководитель направления ИИ и цифрового образования (LMS/СДО)",
+                "Руководитель команды генеративного искусственного интеллекта"),
+        )
+
+    def test_head_of_design(self):
+        self.check(
+            is_head_of_design_vacancy,
+            yes=("Head of Design", "Design Director", "Дизайн директор", "Руководитель отдела дизайна",
+                 "Руководитель UX/UI-дизайна", "Руководитель направления продуктового дизайна",
+                 "Руководитель дизайна APP / Art lead Gamedev", "Арт-директор / Head of Design"),
+            no=("Руководитель направления организационного дизайна",
+                "Ведущий дизайнер интерьера /Руководитель отдела дизайна интерьера",
+                "Руководитель отдела дизайна (машинная вышивка)", "Руководитель проектов по дизайну интерьеров",
+                "Руководитель отдела продаж (ландшафтный дизайн, благоустройство)", "Руководитель дизайн-проектов",
+                "Заведующий кафедрой Дизайна в Университет МФЮА", "Арт-директор"),
+        )
+
+    def test_head_of_product(self):
+        self.check(
+            is_head_of_product_vacancy,
+            yes=("Chief Product Officer (CPO)", "CPO / Head of Product (FinTech)", "Head of Product - Platform B2B/B2C",
+                 "Директор по продукту", "Директор по продуктам (CPO)", "Директор продуктового департамента / CPO",
+                 "Руководитель IT продуктов", "Head of Product / Руководитель продуктового направления"),
+            no=("Директор по продажам (продукты питания)", "Head of Product Marketing",
+                "Руководитель направления продуктового маркетинга (PMM)", "Head of Product (одежда)",
+                "Продуктолог (Head of Product), категория «Одежда» (Wildberries и маркетплейсы)",
+                "Директор по продукту (жилая недвижимость)", "Бизнес-ассистент для Руководителя производства (CPO)",
+                'Руководитель продуктового направления "Системы электрообогрева"',
+                "Art Director / Head of Visual Product Function (GameDev)",
+                "Руководитель направления продуктового дизайна", "Руководитель направления продуктовой аналитики"),
+        )
+
+    def test_head_of_engineering(self):
+        self.check(
+            is_head_of_engineering_vacancy,
+            yes=("CTO / CPTO / Chief Technology Officer / Технический директор", "Технический директор (CTO)",
+                 "DS/ AI Lead (технический директор)", "Engineering Manager (Сollection/Uzum Nasiya)",
+                 "Lead C# .Net /Engineering Manager (Antifraud | Fintech)", "Head of Engineering",
+                 "Руководитель разработки", "Руководитель отдела разработки 1С",
+                 "Руководитель направления фронтенд-разработки (Head of Frontend Development)"),
+            no=(
+                # «Технический директор» без IT-признака — стройка и заводы.
+                "Технический директор (ЖКХ)", "Главный инженер/технический директор",
+                "Производственный директор / Технический директор",
+                # Девелопмент и Business Development по запросу «директор по разработке».
+                "Директор по девелопменту", "Business Development Director / BDD / Директор по развитию бизнеса",
+                "Директор по разработке электротехнической продукции в Ярославль",
+                "Руководитель направления по разработке и внедрению СМК",
+                "Руководитель технологических процессов сортировочного центра / Head of Sortation Engineering",
+                # Тимлиды — уровень команды, их ловят профильные роли.
+                "Team Lead .NET", "Руководитель группы разработки", "Руководитель команды разработки (Go)",
+                # Разработка продукта в банке — продуктовая роль.
+                "Директор по разработке розничных продуктов",
+            ),
+        )
+
+    def test_leaders_skip_team_level(self):
+        for matcher in (is_head_of_data_vacancy, is_head_of_ai_vacancy, is_head_of_design_vacancy,
+                        is_head_of_product_vacancy, is_head_of_engineering_vacancy):
+            for title in ("Team Lead Product Analytics / Руководитель группы продуктовой аналитики",
+                          "Руководитель группы разработки ИИ-агентов (ERP)", "Руководитель команды аналитиков"):
+                self.assertFalse(matcher(title), f"{matcher.__name__}: {title}")
+
+    def test_existing_feeds_unchanged_by_leaders(self):
+        """Лидерские роли добавляют вакансии, а не забирают их у профильных."""
+        self.assertTrue(is_product_designer_vacancy("Lead Product Designer"))
+        self.assertTrue(is_qa_manual_vacancy("Head of QA"))
+        self.assertTrue(is_data_scientist_vacancy("Head of Data Science (fintech)"))
