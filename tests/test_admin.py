@@ -259,7 +259,7 @@ class FormattingTest(DbTestCase):
         self.assertIn("DAU", text)
         self.assertIn("MAU", text)
         self.assertIn("учёт ведётся с", text)
-        self.assertIn("Админ в подсчёт не входит", text)
+        self.assertIn("Админ в подсчётах не учитывается", text)
 
     def test_stats_explain_empty_history(self):
         self.assertIn("ещё не записана", format_admin_stats(self.db, TZ))

@@ -692,106 +692,103 @@ class VacancyDatabase:
         day_end = datetime.combine(today, time.max, tzinfo=tz).astimezone(timezone.utc)
         return day_start.isoformat(), day_end.isoformat()
 
-    def count_active_subscribers(self) -> int:
+    def count_active_subscribers(self, exclude_user_id: Optional[int] = None) -> int:
+        excluded = exclude_user_id if exclude_user_id is not None else -1
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM subscribers WHERE active = 1"
+                "SELECT COUNT(*) AS cnt FROM subscribers WHERE active = 1 AND user_id != ?",
+                (excluded,),
             ).fetchone()
             return int(row["cnt"])
 
-    def subscriber_role_counts(self) -> list[tuple[str, int]]:
+    def _period_start_utc(self, timezone_name: str, days: Optional[int]) -> Optional[str]:
+        """Начало периода из `days` календарных дней, включая сегодня; None — за всё время."""
+        if days is None:
+            return None
+        tz = ZoneInfo(timezone_name)
+        start = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        return (start - timedelta(days=days - 1)).astimezone(timezone.utc).isoformat()
+
+    def subscriber_role_summary(
+        self,
+        timezone_name: str,
+        days: Optional[int] = None,
+        exclude_user_id: Optional[int] = None,
+    ) -> list[tuple[str, int, int]]:
+        """(роль, сколько подписано, сколько из них получали вакансии за период).
+
+        Только нынешние подписчики: строки subscriber_roles у отписавшихся не
+        удаляются, и раньше их роли завышали счёт. По какой роли ушла конкретная
+        вакансия, бот не хранит, поэтому считаем людей, а не вакансии — иначе
+        вакансии человека с двумя ролями засчитывались бы в обе.
+        """
+        excluded = exclude_user_id if exclude_user_id is not None else -1
+        period_start = self._period_start_utc(timezone_name, days) or ""
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT role, COUNT(*) AS cnt
-                FROM subscriber_roles
-                GROUP BY role
-                ORDER BY cnt DESC, role
-                """
+                SELECT
+                    sr.role AS role,
+                    COUNT(*) AS subscribed,
+                    SUM(CASE WHEN EXISTS (
+                        SELECT 1 FROM subscriber_sent ss
+                        WHERE ss.user_id = sr.user_id AND ss.sent_at >= ?
+                    ) THEN 1 ELSE 0 END) AS reached
+                FROM subscriber_roles sr
+                JOIN subscribers s ON s.user_id = sr.user_id AND s.active = 1
+                WHERE sr.user_id != ?
+                GROUP BY sr.role
+                ORDER BY subscribed DESC, sr.role
+                """,
+                (period_start, excluded),
             ).fetchall()
-            return [(row["role"], int(row["cnt"])) for row in rows]
+            return [(row["role"], int(row["subscribed"]), int(row["reached"] or 0)) for row in rows]
 
     def subscriber_delivery_stats(
-        self, timezone_name: str, days: Optional[int] = None
+        self,
+        timezone_name: str,
+        days: Optional[int] = None,
+        exclude_user_id: Optional[int] = None,
     ) -> dict[str, int]:
+        """Доставки за период и сегодня.
+
+        `users_period` — сколько *нынешних* подписчиков получили хоть одну
+        вакансию: его делят на число подписчиков, и с отписавшимися в числителе
+        процент выходил за 100.
+        """
         day_start, day_end = self._day_bounds_utc(timezone_name)
+        period_start = self._period_start_utc(timezone_name, days) or ""
+        excluded = exclude_user_id if exclude_user_id is not None else -1
 
         with self._connect() as conn:
-            if days is None:
-                period_row = conn.execute(
-                    """
-                    SELECT
-                        COUNT(*) AS sent_total,
-                        COUNT(DISTINCT user_id) AS users_reached
-                    FROM subscriber_sent
-                    """
-                ).fetchone()
-            else:
-                tz = ZoneInfo(timezone_name)
-                period_start = (
-                    datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
-                    - timedelta(days=days - 1)
-                ).astimezone(timezone.utc)
-                period_row = conn.execute(
-                    """
-                    SELECT
-                        COUNT(*) AS sent_total,
-                        COUNT(DISTINCT user_id) AS users_reached
-                    FROM subscriber_sent
-                    WHERE sent_at >= ?
-                    """,
-                    (period_start.isoformat(),),
-                ).fetchone()
-            today_row = conn.execute(
+            sent_period = conn.execute(
+                "SELECT COUNT(*) FROM subscriber_sent WHERE sent_at >= ? AND user_id != ?",
+                (period_start, excluded),
+            ).fetchone()[0]
+            users_period = conn.execute(
                 """
-                SELECT
-                    COUNT(*) AS sent_total,
-                    COUNT(DISTINCT user_id) AS users_reached
-                FROM subscriber_sent
-                WHERE sent_at >= ? AND sent_at <= ?
+                SELECT COUNT(DISTINCT ss.user_id)
+                FROM subscriber_sent ss
+                JOIN subscribers s ON s.user_id = ss.user_id AND s.active = 1
+                WHERE ss.sent_at >= ? AND ss.user_id != ?
                 """,
-                (day_start, day_end),
+                (period_start, excluded),
+            ).fetchone()[0]
+            today = conn.execute(
+                """
+                SELECT COUNT(*) AS sent_total, COUNT(DISTINCT user_id) AS users_reached
+                FROM subscriber_sent
+                WHERE sent_at >= ? AND sent_at <= ? AND user_id != ?
+                """,
+                (day_start, day_end, excluded),
             ).fetchone()
 
         return {
-            "sent_period": int(period_row["sent_total"]),
-            "users_period": int(period_row["users_reached"]),
-            "sent_today": int(today_row["sent_total"]),
-            "users_today": int(today_row["users_reached"]),
+            "sent_period": int(sent_period or 0),
+            "users_period": int(users_period or 0),
+            "sent_today": int(today["sent_total"] or 0),
+            "users_today": int(today["users_reached"] or 0),
         }
-
-    def subscriber_sent_by_role(
-        self, timezone_name: str, days: Optional[int] = None
-    ) -> list[tuple[str, int]]:
-        with self._connect() as conn:
-            if days is None:
-                rows = conn.execute(
-                    """
-                    SELECT sr.role AS role, COUNT(*) AS cnt
-                    FROM subscriber_sent ss
-                    JOIN subscriber_roles sr ON sr.user_id = ss.user_id
-                    GROUP BY sr.role
-                    ORDER BY cnt DESC, sr.role
-                    """
-                ).fetchall()
-            else:
-                tz = ZoneInfo(timezone_name)
-                period_start = (
-                    datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
-                    - timedelta(days=days - 1)
-                ).astimezone(timezone.utc)
-                rows = conn.execute(
-                    """
-                    SELECT sr.role AS role, COUNT(*) AS cnt
-                    FROM subscriber_sent ss
-                    JOIN subscriber_roles sr ON sr.user_id = ss.user_id
-                    WHERE ss.sent_at >= ?
-                    GROUP BY sr.role
-                    ORDER BY cnt DESC, sr.role
-                    """,
-                    (period_start.isoformat(),),
-                ).fetchall()
-            return [(row["role"], int(row["cnt"])) for row in rows]
 
     def channel_post_stats(
         self, timezone_name: str, days: Optional[int] = None

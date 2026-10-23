@@ -37,10 +37,11 @@ def format_admin_stats(
 ) -> str:
     period_label = _period_title(days)
     audience = db.audience_stats(timezone_name, exclude_user_id=exclude_user_id)
-    active = db.count_active_subscribers()
-    role_counts = db.subscriber_role_counts()
-    delivery = db.subscriber_delivery_stats(timezone_name, days=days)
-    sent_by_role = db.subscriber_sent_by_role(timezone_name, days=days)
+    active = db.count_active_subscribers(exclude_user_id=exclude_user_id)
+    roles = db.subscriber_role_summary(timezone_name, days=days, exclude_user_id=exclude_user_id)
+    delivery = db.subscriber_delivery_stats(
+        timezone_name, days=days, exclude_user_id=exclude_user_id
+    )
     channel = db.channel_post_stats(timezone_name, days=days)
 
     reach_pct = 0
@@ -56,10 +57,11 @@ def format_admin_stats(
         f"• Активных: <b>{active}</b>",
     ]
 
-    if role_counts:
-        lines.append("• Выбранные роли:")
-        for role_id, count in role_counts:
-            lines.append(f"  — {escape_html(_role_label(role_id))}: {count}")
+    if roles:
+        received = "получали вакансии" if days is None else f"получали за {days} дн."
+        lines.append(f"• По ролям (подписаны · {received}):")
+        for role_id, subscribed, reached in roles:
+            lines.append(f"  — {escape_html(_role_label(role_id))}: {subscribed} · {reached}")
     else:
         lines.append("• Роли не выбраны")
 
@@ -73,11 +75,6 @@ def format_admin_stats(
         ]
     )
 
-    if sent_by_role:
-        role_period = "всего" if days is None else "за период"
-        lines.append(f"• По ролям ({role_period}):")
-        for role_id, count in sent_by_role:
-            lines.append(f"  — {escape_html(_role_label(role_id))}: {count}")
 
     posted_label = "всего" if days is None else f"за {days} дн."
     lines.extend(
@@ -100,7 +97,8 @@ def format_admin_stats(
     lines.extend(
         [
             "",
-            "<i>Просмотры постов канала — только в Telegram → Статистика канала.</i>",
+            "<i>Админ в подсчётах не учитывается. Просмотры постов канала — только в "
+            "Telegram → Статистика канала.</i>",
         ]
     )
 
@@ -128,8 +126,7 @@ def _audience_lines(audience: dict) -> list[str]:
     if since:
         lines.append(
             f"<i>Активные — те, кто что-то делал в боте; учёт ведётся с "
-            f"{_format_day(since)}. Получившие дайджест — с начала рассылок. "
-            f"Админ в подсчёт не входит.</i>"
+            f"{_format_day(since)}. Получившие дайджест — с начала рассылок.</i>"
         )
     else:
         lines.append(
