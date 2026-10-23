@@ -483,3 +483,105 @@ class GovernanceAndLeadersTest(unittest.TestCase):
         self.assertTrue(is_product_designer_vacancy("Lead Product Designer"))
         self.assertTrue(is_qa_manual_vacancy("Head of QA"))
         self.assertTrue(is_data_scientist_vacancy("Head of Data Science (fintech)"))
+
+
+class LeadersQaFindingsTest(unittest.TestCase):
+    """Находки независимой проверки на живой выдаче HH и каверзные заголовки к ним."""
+
+    E = staticmethod(is_head_of_engineering_vacancy)
+    D = staticmethod(is_head_of_data_vacancy)
+    A = staticmethod(is_head_of_ai_vacancy)
+    G = staticmethod(is_data_governance_vacancy)
+    P = staticmethod(is_head_of_product_vacancy)
+    DS = staticmethod(is_head_of_design_vacancy)
+
+    def cases(self):
+        E, D, A, G, P, DS = self.E, self.D, self.A, self.G, self.P, self.DS
+        return [
+            # Кириллическое «СТО» — тоже CTO; «AI-ассистенты» — продукт, а не помощник.
+            (E, "СТО/Chief Technology Officer (Технический директор)", True),
+            (E, "Технический директор CTO (AI/ИИ, Цифровые ассистенты)", True),
+            (A, "Руководитель направления AI-ассистентов", True),
+            (E, "Секретарь технического директора (IT)", False),
+            # Руководители проектов и разработка не ПО.
+            (E, "Руководитель проекта разработки образовательных программ", False),
+            (E, "Руководитель проектов разработки мобильной ОС", False),
+            (E, "Руководитель отдела фармацевтической разработки", False),
+            (E, "Руководитель отдела разработки клеевых систем", False),
+            (E, "Руководитель направления разработки технологии культивирования", False),
+            (E, "Руководитель отдела разработки и запуска новых продуктов", False),
+            (E, "Технический директор (разработка месторождений)", False),
+            (E, "Директор по разработке (жилая недвижимость)", False),
+            (E, "Начальник отдела разработки готовых лекарственных форм", False),
+            (E, "Начальник лаборатории разработки усилителей мощности и РЭА", False),
+            (E, "Начальник отдела разработки планов развития НПЗ", False),
+            # «Development» — разработка, но не People / Corporate / Infrastructure.
+            (E, "Head of People Development", False),
+            (E, "Head of Corporate Development", False),
+            (E, "Head of Infrastructure Development and Climate Resiliency Department", False),
+            (E, "Head of Development", True),
+            # Тимлид в любой форме — не руководитель направления; холдинг — не команда.
+            (E, "Руководитель подгруппы разработки DWH", False),
+            (A, "Руководитель ML-группы", False),
+            (A, "Руководитель AI-команды", False),
+            (DS, "Руководитель дизайн-команды", False),
+            (E, "Руководитель разработки (тим-лид)", False),
+            (E, "Руководитель разработки группы компаний", True),
+            # «Начальник» и английские Director / VP.
+            (E, "Начальник отдела разработки ПО", True),
+            (E, "Director of Engineering", True),
+            (E, "VP Engineering", True),
+            (P, "Director of Product", True),
+            (P, "VP of Product", True),
+            (D, "Director of Data", True),
+            (E, "Руководитель разработки программных продуктов", True),
+            (E, "Руководитель разработки интернет-магазина", True),
+            (E, "Руководитель отдела разработки и эксплуатации ПО", True),
+            # Продукт: CPO бывает Chief People Officer; не цифровые продукты.
+            (P, "Chief People Officer (CPO)", False),
+            (P, "Директор по персоналу (CPO)", False),
+            (P, "CPO (HR Tech)", True),
+            (P, "Head of Financial Products", True),
+            (P, "Руководитель IT-продуктов", True),
+            (P, "Директор по продукту (медицинские изделия)", False),
+            (P, "Директор продуктовой сети супермаркетов", False),
+            (P, "Директор сопровождения продуктов и процессов (АСОИ ФинЦЕРТ)", False),
+            # Данные: «центр» — не «цены»; CDO бывает Design / Development.
+            (D, "Руководитель центра компетенций по данным", True),
+            (D, "CDO (Chief Design Officer)", False),
+            (D, "Chief Development Officer (CDO)", False),
+            (D, "Руководитель проектов по анализу данных", False),
+            (D, "Head of Analytics (Marketing)", False),
+            # Governance: мастер-данные и НСИ — да; 1С с MDM — да; MDM у админов — нет.
+            (G, "Специалист по управлению мастер данными", True),
+            (G, "Методолог НСИ", True),
+            (G, "Функциональный архитектор НСИ", True),
+            (G, "Аналитик качества клиентских данных", True),
+            (G, "Data Steward (оператор связи)", True),
+            (G, "Системный аналитик 1С (MDM)", True),
+            (G, "Оператор НСИ", False),
+            (G, "Специалист по ведению нормативно-справочной информации (НСИ) и складскому учету", False),
+            (G, "Ведущий Разработчик серверной части (Python) [Центр DataGov, Big Data, МТС Веб Сервисы]", False),
+            (G, "Системный администратор (MDM, Intune)", False),
+            # Дизайн.
+            (DS, "Head of UX", True),
+            (DS, "Директор по продуктовому дизайну", True),
+            (DS, "Chief Design Officer", True),
+            (DS, "Head of Sound Design", False),
+            (DS, "Head of Instructional Design", False),
+            (DS, "Руководитель отдела дизайна (обувь)", False),
+            (DS, "Руководитель отдела дизайна и разработки (фабрика игрушек)", False),
+            (DS, "Директор Союза дизайнеров Республики Татарстан", False),
+            (DS, "Арт-директор дизайн-студии", False),
+            # AI.
+            (A, "Руководитель отдела машинного обучения", True),
+            (A, "Head of GenAI", True),
+            (A, "Head of MLOps", True),
+            (A, "Руководитель MLM-направления", False),
+            (A, "Руководитель направления AI-тренеров", False),
+        ]
+
+    def test_findings(self):
+        for matcher, title, expected in self.cases():
+            with self.subTest(role=matcher.__name__, title=title):
+                self.assertEqual(matcher(title), expected)

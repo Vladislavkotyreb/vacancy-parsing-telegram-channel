@@ -416,81 +416,109 @@ def _belongs_to_data_role(title: str) -> bool:
 
 DATA_GOVERNANCE_INCLUDE = [
     re.compile(r"data[\s-]*governance|datagov", re.I),
-    re.compile(r"data[\s-]*steward|data[\s-]*quality|качеств\w*\s+данных", re.I),
-    re.compile(r"управлени\w*\s+данными|data[\s-]*management", re.I),
-    re.compile(r"\bmdm\b|master[\s-]*data|дата[\s-]*каталог|data[\s-]*catalog", re.I),
+    re.compile(r"data[\s-]*steward|data[\s-]*quality|качеств\w*\s+(?:\w+\s+)?данных", re.I),
+    re.compile(r"управлени\w*\s+(?:мастер[\s-]*)?данными|data[\s-]*management", re.I),
+    re.compile(r"\bmdm\b|master[\s-]*data|мастер[\s-]*данн|дата[\s-]*каталог|data[\s-]*catalog", re.I),
     re.compile(r"методолог\w*\s+(?:управления\s+)?данн", re.I),
+    # НСИ — нормативно-справочная информация, по сути те же мастер-данные.
+    re.compile(r"\bнси\b", re.I),
 ]
 
 DATA_GOVERNANCE_EXCLUDE = [
-    # Учётная работа с НСИ в 1С и Excel, госслужба по разрядам — не governance.
-    re.compile(r"\b1[сc]\b|excel|разряд|супервайзер|оператор|делопроизвод", re.I),
+    # Учётная работа в 1С и Excel, госслужба по разрядам — не governance.
+    # 1С вместе с MDM — уже мастер-данные, это не отсекаем.
+    re.compile(r"^(?!.*\bmdm\b).*\b1[сc]\b", re.I),
+    re.compile(
+        r"excel|разряд|супервайзер|делопроизвод|ввод\w*\s+данн"
+        r"|ведени\w*\s+(?:нормативн|справочник|нси)|^оператор|оператор\w*\s+(?:пк|ввода|баз|нси)"
+        r"|склад|техническ\w*\s+документац",
+        re.I,
+    ),
     re.compile(r"devops|поддержк|сопровожден|support", re.I),
     re.compile(r"образоват|обучени|registrar|расч[её]т", re.I),
-    # MDM у безопасников — Mobile Device Management, не мастер-данные.
-    re.compile(r"\bиб\b|\bdlp\b|антивирус|mobile\s+device", re.I),
-    re.compile(r"клиент|продаж|\bsales\b|account", re.I),
+    # MDM у безопасников и админов — Mobile Device Management, не мастер-данные.
+    re.compile(r"\bиб\b|\bdlp\b|антивирус|mobile\s+device|intune|системн\w*\s+администратор", re.I),
+    re.compile(r"работе\s+с\s+клиент|продаж|\bsales\b|account", re.I),
+    # Разработчик в подразделении «Центр DataGov» — бэкенд, а не governance.
+    re.compile(r"серверн\w*\s+част|backend|бэкенд", re.I),
 ]
 
 
 # --- Руководители ---
-# Уровень директоров и руководителей направлений. Тимлидов («Руководитель
-# группы», Team Lead) сюда не берём — их ловят профильные роли, а руководитель,
-# подписанный на эту категорию, не должен получать вакансии своей команды.
+# Уровень директоров и руководителей направлений. Тимлидов сюда не берём — их
+# ловят профильные роли, а руководитель, подписанный на эту категорию, не
+# должен получать вакансии своей команды. «Начальник» — то же, что руководитель.
+LEAD_RU = r"(?:руководител|начальник)\w*"
+
 LEADER_EXCLUDE = [
-    re.compile(r"руководител\w*\s+(?:группы|команды)|team[\s-]*lead|тимлид", re.I),
-    re.compile(r"ассистент|помощник|assistant", re.I),
+    # Уровень команды в любой форме: «Руководитель группы», «…подгруппы»,
+    # «…ML-группы», «Начальник AI-команды», «тим-лид». «Группа компаний» —
+    # это холдинг, а не команда.
+    re.compile(LEAD_RU + r"\s+(?:[\w-]+[\s-]+)?(?:под)?групп(?!\w*\s+компани)", re.I),
+    re.compile(LEAD_RU + r"\s+(?:[\w-]+[\s-]+)?команд", re.I),
+    re.compile(r"team[\s-]*lead|тим[\s-]*лид", re.I),
+    # Ассистент руководителя — да, «AI-ассистенты» как продукт — нет.
+    re.compile(
+        r"(?:ассистент|помощник|секретар)\w*\s+(?:руководител|директор|генеральн|основател"
+        r"|ceo|коммерческ|технич)|бизнес[\s-]*ассистент|(?:personal|executive)\s+assistant"
+        r"|^(?:ассистент|помощник|секретар)",
+        re.I,
+    ),
     re.compile(r"продаж|\bsales\b|pre-?sale|аккаунт|account", re.I),
 ]
 
 HEAD_OF_DATA_INCLUDE = [
     re.compile(r"chief\s+data|\bcdo\b", re.I),
-    re.compile(r"head\s+of\s+(?:data|analytics|bi)\b", re.I),
+    re.compile(r"(?:head|director|vp)\s+of\s+(?:data|analytics|bi)\b", re.I),
     re.compile(r"директор\w*\s+по\s+(?:управлению\s+)?(?:данн|аналитик)", re.I),
     re.compile(r"директор\w*\s+по\s+(?:\w+\s+){1,3}данн", re.I),
-    re.compile(r"руководител\w*\s+(?:\w+\s+){0,3}(?:аналитик\w*|анализ\w*)\s+данных", re.I),
-    re.compile(r"руководител\w*\s+(?:\w+\s+){0,2}по\s+данным", re.I),
+    re.compile(LEAD_RU + r"\s+(?:\w+\s+){0,3}(?:аналитик\w*|анализ\w*)\s+данных", re.I),
+    re.compile(LEAD_RU + r"\s+(?:\w+\s+){0,3}по\s+данным", re.I),
     # Руководитель продуктовой аналитики — тоже руководитель в Data.
     re.compile(
-        r"(?:руководител|директор|head)\w*\s+(?:of\s+)?(?:\w+\s+){0,2}"
+        r"(?:руководител|начальник|директор|head)\w*\s+(?:of\s+)?(?:\w+\s+){0,2}"
         r"(?:продуктов\w*\s+аналитик|product\s+analytics)",
         re.I,
     ),
-    re.compile(r"руководител\w*\s+\w+\s+\(bi\b", re.I),
+    re.compile(LEAD_RU + r"\s+\w+\s+\(bi\b", re.I),
     re.compile(
-        r"(?:руководител|директор)\w*\s+(?:отдела|направления|департамента|дирекции"
+        r"(?:руководител|начальник|директор)\w*\s+(?:отдела|направления|департамента|дирекции"
         r"|управления|службы|центра)\s+(?:bi\b|данных\b)",
         re.I,
     ),
     # Голое «аналитики» — только с признаком данных рядом: без него это аналитика
     # животноводства, доходности, аудита.
     re.compile(
-        r"^(?=.*(?:руководител|директор)\w*\s+(?:отдела|направления|департамента|дирекции"
-        r"|управления|службы|центра)\s+аналитики\b)"
+        r"^(?=.*(?:руководител|начальник|директор)\w*\s+(?:отдела|направления|департамента"
+        r"|дирекции|управления|службы|центра)\s+аналитики\b)"
         r"(?=.*(?:python|sql|\bdata\b|\bbi\b|dwh|\bml\b|\bai\b|данн|метрик|a/b|продукт))",
         re.I,
     ),
 ]
 
 HEAD_OF_DATA_EXCLUDE = [
-    # «CDO» бывает и Chief Digital Officer.
+    # «CDO» бывает и Chief Digital, Design или Development Officer.
     re.compile(r"digital|цифров|трансформац", re.I),
+    re.compile(r"chief\s+(?:design|development)|(?:design|development)\s+officer", re.I),
+    re.compile(LEAD_RU + r"\s+проект|project\s+manager", re.I),
     # «Аналитика» по-русски — ещё и финансы, продажи, логистика, цены.
     re.compile(
-        r"финанс|инвест|логист|снабж|закуп|\bhr\b|персонал|кадр|цен|смет|строит|недвиж"
-        r"|рынк|маркетинг|crm|лидоген|веб[\s-]*аналит|бизнес[\s-]*анали|системн|безопасн"
-        r"|\bиб\b|угроз|взыскан|мошенни|стратеги|рейтинг|одежд|fashion|химик|консалт",
+        r"финанс|инвест|логист|снабж|закуп|\bhr\b|персонал|кадр|ценообраз|\bцен\b|цены|ценов"
+        r"|смет|строит|недвиж|рынк|маркетинг|marketing|crm|лидоген|веб[\s-]*аналит"
+        r"|бизнес[\s-]*анали|системн|безопасн|\bиб\b|угроз|взыскан|мошенни|стратеги|рейтинг"
+        r"|одежд|fashion|химик|консалт",
         re.I,
     ),
 ]
 
 HEAD_OF_AI_INCLUDE = [
     re.compile(r"chief\s+ai|\bcaio\b", re.I),
-    re.compile(r"head\s+of\s+(?:\w+\s+)?(?:ai|ml|machine\s+learning)\b", re.I),
+    re.compile(r"(?:head|director|vp)\s+of\s+(?:\w+\s+)?(?:ai|genai|ml|mlops|machine\s+learning)\b", re.I),
     re.compile(r"директор\w*\s+по\s+(?:искусственн\w+\s+интеллект|ии\b|ai\b)", re.I),
+    # \b после аббревиатур: «Руководитель MLM-направления» — сетевой маркетинг.
     re.compile(
-        r"руководител\w*\s+(?:\w+[\s-]+){0,3}(?:ai|ии|ml|искусственн\w*\s+интеллект"
-        r"|\"искусственн\w*\s+интеллект)",
+        LEAD_RU + r"\s+(?:\w+[\s-]+){0,3}(?:(?:ai|ии|ml|mlops)\b|искусственн\w*\s+интеллект"
+        r"|\"искусственн\w*\s+интеллект|машинн\w*\s+обучени)",
         re.I,
     ),
 ]
@@ -498,32 +526,42 @@ HEAD_OF_AI_INCLUDE = [
 HEAD_OF_AI_EXCLUDE = [
     # Продажи, маркетинг, контент и проекты в AI-компаниях — не руководство AI.
     re.compile(r"маркетинг|marketing|маркетолог|\bseo\b|контент|content|креатор", re.I),
-    re.compile(r"руководител\w*\s+проект|project\s+manager", re.I),
-    re.compile(r"образова|профессор|аспирант|академи", re.I),
-    re.compile(r"(?:ai|ии)[\s-]+проект", re.I),
+    re.compile(LEAD_RU + r"\s+проект|project\s+manager|(?:ai|ии)[\s-]+проект", re.I),
+    re.compile(r"образова|профессор|аспирант|академи|тренер|trainer", re.I),
     re.compile(r"информационн\w*\s+безопасн|\bиб\b|арт[\s-]*директор|магазин|шоурум", re.I),
 ]
 
 HEAD_OF_DESIGN_INCLUDE = [
-    re.compile(r"head\s+of\s+(?:\w+\s+)?design", re.I),
-    re.compile(r"design\s+director|дизайн[\s-]*директор|директор\w*\s+по\s+дизайн", re.I),
-    re.compile(r"руководител\w*\s+(?:\w+[\s/-]+){0,2}дизайн", re.I),
+    re.compile(r"(?:head|director|vp)\s+of\s+(?:\w+\s+)?(?:design|ux|ui)\b", re.I),
+    re.compile(r"design\s+director|chief\s+design\s+officer|дизайн[\s-]*директор", re.I),
+    re.compile(r"директор\w*\s+(?:по\s+)?(?:\w+\s+)?дизайн", re.I),
+    re.compile(LEAD_RU + r"\s+(?:\w+[\s/-]+){0,2}дизайн", re.I),
 ]
 
 HEAD_OF_DESIGN_EXCLUDE = [
     re.compile(r"организацион\w*\s+дизайн|оргдизайн", re.I),  # это HR
     re.compile(r"интерьер|interior|ландшафт|благоустр|архитектур|design\s*&\s*build|строител", re.I),
-    re.compile(r"одежд|fashion|вышивк|экипировк|печат|\bdtf\b|мебел|ювелир", re.I),
-    re.compile(r"руководител\w*\s+проект|дизайн[\s-]*проект|кафедр|школ\w*\s+дизайн|университет|преподав", re.I),
+    re.compile(r"одежд|fashion|вышивк|экипировк|печат|\bdtf\b|мебел|ювелир|обув|игруш", re.I),
+    re.compile(r"sound|instructional|союз", re.I),
+    re.compile(
+        LEAD_RU + r"\s+проект|дизайн[\s-]*проект|кафедр|школ\w*\s+дизайн|университет|преподав",
+        re.I,
+    ),
+    # Арт-директор — своя роль; в руководителей дизайна — только если прямо
+    # написано «Head of Design» или «руководитель дизайна».
+    re.compile(
+        r"^(?!.*(?:head\s+of\s+design|руководител\w*\s+(?:\w+\s+)?дизайн)).*арт[\s-]*директор",
+        re.I,
+    ),
 ]
 
 HEAD_OF_PRODUCT_INCLUDE = [
     re.compile(r"\bcpo\b|chief\s+product\s+officer", re.I),
-    re.compile(r"head\s+of\s+(?:\w+\s+){0,2}product\b", re.I),
+    re.compile(r"(?:head|director|vp)\s+of\s+(?:\w+\s+){0,2}products?\b", re.I),
     re.compile(r"product\s+director|директор\w*\s+(?:по\s+)?(?:\w+\s+)?продукт", re.I),
     re.compile(
-        r"руководител\w*\s+(?:продуктового\s+(?:направления|департамента)"
-        r"|департамента\s+продукт|it\s+продукт|ит[\s-]+продукт)",
+        LEAD_RU + r"\s+(?:продуктового\s+(?:направления|департамента)"
+        r"|департамента\s+продукт|(?:it|ит)[\s-]+продукт)",
         re.I,
     ),
 ]
@@ -532,24 +570,37 @@ HEAD_OF_PRODUCT_EXCLUDE = [
     re.compile(r"маркетинг|marketing|\bpmm\b|placement", re.I),
     re.compile(r"дизайн|design|аналит|analytic", re.I),  # руководители дизайна и Data
     re.compile(r"одежд|fashion|продуктолог|ассортимент", re.I),
-    re.compile(r"питани|общепит|пицц|ресторан|магазин|недвиж|биотех|фарм|закуп", re.I),
-    # «Руководитель производства (CPO)» — Chief Production Officer.
+    re.compile(
+        r"питани|общепит|пицц|ресторан|магазин|супермаркет|продуктов\w*\s+сет|недвиж|биотех"
+        r"|фарм|медицин|закуп|туропер|туристич|сопровожден",
+        re.I,
+    ),
+    # CPO — ещё и Chief People Officer и Chief Production Officer.
+    # «CPO (HR Tech)» — продукт в HR-tech, его не трогаем.
+    re.compile(r"chief\s+people|people\s+officer|по\s+персоналу|по\s+кадр", re.I),
     re.compile(r"производств|двер|смазоч", re.I),
     # Продуктовые линейки оборудования — промышленность, а не цифровой продукт.
     re.compile(r"тепл|насос|прибор|кипиа|электрообогрев|электротех|оборудован|hardware", re.I),
-    re.compile(r"art\s*director|арт[\s-]*директор", re.I),
+    re.compile(r"art\s*director|арт[\s-]*директор|технич\w*\s+директор", re.I),
 ]
 
 HEAD_OF_ENGINEERING_INCLUDE = [
     re.compile(r"\bcto\b|\bcpto\b|chief\s+technology\s+officer", re.I),
-    re.compile(r"engineering\s+manager|vp\s+of\s+engineering", re.I),
     re.compile(
-        r"head\s+of\s+(?:\w+\s+)?(?:engineering|development|software|frontend|backend|mobile|platform)\b",
+        r"engineering\s+manager|vp\s+(?:of\s+)?engineering"
+        r"|director\s+of\s+(?:engineering|software|development)",
+        re.I,
+    ),
+    # «Development» без уточнения — разработка, но не People / Business /
+    # Corporate / Infrastructure Development.
+    re.compile(
+        r"head\s+of\s+(?:\w+\s+)?(?:engineering|software|frontend|backend|mobile|platform)\b"
+        r"|head\s+of\s+(?:(?:software|frontend|backend|mobile|web|game|platform|it)\s+)?development\b",
         re.I,
     ),
     re.compile(r"директор\w*\s+по\s+(?:\w+\s+)?разработк", re.I),
     re.compile(
-        r"руководител\w*\s+(?:(?:отдела|департамента|направления|управления|дирекции|центра)\s+)?"
+        LEAD_RU + r"\s+(?:(?:отдела|департамента|направления|управления|дирекции|центра)\s+)?"
         r"(?:\w+\s+)?разработк",
         re.I,
     ),
@@ -564,19 +615,35 @@ HEAD_OF_ENGINEERING_INCLUDE = [
 
 HEAD_OF_ENGINEERING_EXCLUDE = [
     # «Директор по разработке» в выдаче HH — это и девелопмент, и Business Development.
-    re.compile(r"девелоп|business\s*development|развити\w*\s+бизнеса", re.I),
     re.compile(
-        r"строит|производств|завод|монтаж|жкх|эксплуатац|\bсто\b|автосервис|продукци"
-        r"|издели|прибор|оборудован|конструкт|электротех|станци|\bгип\b|главн\w*\s+инженер"
-        r"|ателье|швейн|одежд|ресторан|отел|гостиниц|магазин",
+        r"девелоп|business\s*development|corporate\s+development|развити\w*\s+бизнеса", re.I
+    ),
+    # Кириллическое «СТО» (станция техобслуживания) здесь не исключаем: оно же
+    # бывает CTO, набранным кириллицей, — «СТО/Chief Technology Officer».
+    re.compile(
+        r"строит|производств|завод|монтаж|жкх|автосервис|продукци|издели|прибор|оборудован"
+        r"|конструкт|электротех|станци|\bгип\b|главн\w*\s+инженер|ателье|швейн|одежд"
+        r"|ресторан|отел|гостиниц|недвиж|месторожд",
         re.I,
     ),
+    # Эксплуатация — стройка и ЖКХ, но не «разработка и эксплуатация ПО».
+    re.compile(r"^(?!.*(?:(?-i:\bПО\b)|software|программн)).*эксплуатац", re.I),
     # Системы менеджмента качества, склады и логистика, продвижение — не разработка ПО.
     re.compile(r"\bсмк\b|менеджмент\w*\s+качеств|сортировоч|склад|логист|продвижен|светотехн", re.I),
-    # «Директор по разработке розничных продуктов» в банке — это продукт.
-    re.compile(r"разработк\w*\s+(?:\w+\s+)?продукт|product\s+development", re.I),
+    # Разработка не ПО: фармацевтика, химия, агро, напитки, учебные программы.
+    re.compile(
+        r"фармацевт|лекарств|клеев|хими|культивир|напит|образовательн|усилител|\bрэа\b"
+        r"|радиоэлектрон|\bнпз\b|планов\s+развити|медиа[\s-]*проект",
+        re.I,
+    ),
+    # «Директор по разработке розничных продуктов» в банке — это продукт; но
+    # «разработка программных продуктов» — это разработка.
+    re.compile(
+        r"^(?!.*программн).*(?:разработк\w*\s+(?:\w+\s+){0,3}продукт|product\s+development)",
+        re.I,
+    ),
+    re.compile(LEAD_RU + r"\s+проект|project\s+manager", re.I),
 ]
-
 
 def is_data_governance_vacancy(title: str) -> bool:
     return _matches(title, DATA_GOVERNANCE_INCLUDE, DATA_GOVERNANCE_EXCLUDE)
