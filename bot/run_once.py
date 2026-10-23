@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
@@ -16,6 +17,7 @@ except ImportError:
 from aiogram import Bot
 from aiogram.enums import ParseMode
 
+from bot.broadcast import load_broadcast, run_broadcast, send_preview
 from bot.config import Settings
 from bot.database import VacancyDatabase
 from bot.service import VacancyService
@@ -29,9 +31,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "mode",
         nargs="?",
-        choices=("fetch", "test", "status", "subscribers", "subscribers-preview"),
+        choices=("fetch", "test", "status", "subscribers", "subscribers-preview", "broadcast"),
         default=os.getenv("RUN_MODE", "fetch"),
-        help="fetch — пост в канал; subscribers — рассылка; subscribers-preview — проверка без отправки",
+        help="fetch — пост в канал; subscribers — рассылка; subscribers-preview — проверка без "
+        "отправки; broadcast — разовое сообщение всем (по умолчанию только превью админу)",
+    )
+    parser.add_argument("--file", help="broadcast: файл с текстом сообщения (HTML Телеграма)")
+    parser.add_argument(
+        "--send",
+        action="store_true",
+        help="broadcast: разослать всем. Без флага — только превью админу",
+    )
+    parser.add_argument(
+        "--include-starters",
+        action="store_true",
+        help="broadcast: ещё и тем, кто нажимал /start, но не подписался",
     )
     return parser.parse_args()
 
@@ -139,6 +153,9 @@ async def main() -> int:
                 await _notify_admin(bot, admin_id, "\n".join(lines))
             return 0
 
+        if args.mode == "broadcast":
+            return await _broadcast(bot, db, args, admin_id)
+
         if args.mode == "subscribers-preview":
             subscriber_service = SubscriberService(settings, db, bot)
             await subscriber_service.preview_digests()
@@ -166,6 +183,40 @@ async def main() -> int:
         return 1
     finally:
         await bot.session.close()
+
+
+async def _broadcast(bot: Bot, db: VacancyDatabase, args: argparse.Namespace, admin_id: str) -> int:
+    if not args.file:
+        logger.error("broadcast: укажите --file с текстом сообщения")
+        return 1
+    broadcast_id, text = load_broadcast(Path(args.file))
+    user_ids = db.broadcast_audience(include_starters=args.include_starters)
+
+    if not args.send:
+        if not admin_id:
+            logger.error("broadcast: для превью нужен TELEGRAM_ADMIN_ID в .env")
+            return 1
+        await send_preview(bot, int(admin_id), text)
+        logger.info(
+            "Превью «%s» отправлено админу. Получателей при отправке: %s. "
+            "Чтобы разослать всем, добавьте --send",
+            broadcast_id,
+            len(user_ids),
+        )
+        return 0
+
+    stats = await run_broadcast(bot, db, broadcast_id, text, user_ids)
+    await _notify_admin(
+        bot,
+        admin_id,
+        f"✅ Рассылка «{broadcast_id}».\n"
+        f"Получателей: {stats.recipients}\n"
+        f"Доставлено сейчас: {stats.sent}\n"
+        f"Уже получали раньше: {stats.already_sent}\n"
+        f"Заблокировали бота: {stats.blocked}\n"
+        f"Не доставлено (повторится при перезапуске): {stats.failed}",
+    )
+    return 0
 
 
 async def _notify_admin(

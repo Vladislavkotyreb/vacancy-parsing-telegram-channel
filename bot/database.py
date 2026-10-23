@@ -128,6 +128,16 @@ class VacancyDatabase:
 
                 CREATE INDEX IF NOT EXISTS idx_user_activity_day
                     ON user_activity (day);
+
+                -- Кому уже ушло разовое сообщение (ченжлог и т. п.). Отметка ставится
+                -- только после подтверждённой доставки: сеть на хостинге рвётся,
+                -- и прерванную рассылку можно перезапустить без повторов.
+                CREATE TABLE IF NOT EXISTS broadcast_sent (
+                    broadcast_id TEXT NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    sent_at TEXT NOT NULL,
+                    PRIMARY KEY (broadcast_id, user_id)
+                );
                 """
             )
 
@@ -590,6 +600,49 @@ class VacancyDatabase:
                     data["roles"] = [data["role"]]
                 result.append(data)
             return result
+
+    def broadcast_audience(self, include_starters: bool = False) -> list[int]:
+        """Активные подписчики; с include_starters — ещё и те, кто нажимал /start,
+        но так и не подписался. Отписавшимся рассылку не шлём."""
+        with self._connect() as conn:
+            ids = [
+                int(row["user_id"])
+                for row in conn.execute(
+                    "SELECT user_id FROM subscribers WHERE active = 1 ORDER BY user_id"
+                )
+            ]
+            if include_starters:
+                ids += [
+                    int(row["user_id"])
+                    for row in conn.execute(
+                        """
+                        SELECT user_id FROM users
+                        WHERE first_seen_at IS NOT NULL
+                          AND user_id NOT IN (SELECT user_id FROM subscribers)
+                        ORDER BY user_id
+                        """
+                    )
+                ]
+        return ids
+
+    def was_broadcast_sent(self, broadcast_id: str, user_id: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM broadcast_sent WHERE broadcast_id = ? AND user_id = ?",
+                (broadcast_id, user_id),
+            ).fetchone()
+            return row is not None
+
+    def mark_broadcast_sent(self, broadcast_id: str, user_id: int) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO broadcast_sent (broadcast_id, user_id, sent_at)
+                VALUES (?, ?, ?)
+                """,
+                (broadcast_id, user_id, now),
+            )
 
     def is_sent_to_subscriber(self, user_id: int, vacancy_uid: str) -> bool:
         with self._connect() as conn:

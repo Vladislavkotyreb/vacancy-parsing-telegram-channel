@@ -81,6 +81,8 @@ python -m bot.run_once subscribers          # разослать дайджес�
 python -m bot.run_once subscribers-preview  # что ушло бы подписчикам, без отправки
 python -m bot.run_once test                 # тестовый пост в канал на моках
 python -m bot.run_once status               # статистика последнего прогона
+python -m bot.run_once broadcast --file broadcasts/<id>.html          # превью разовой рассылки только админу
+python -m bot.run_once broadcast --file broadcasts/<id>.html --send   # разослать подписчикам
 ```
 
 Чат-бот подписок (polling, держит один процесс через pid-lock в `logs/chat-bot.pid`):
