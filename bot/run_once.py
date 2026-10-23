@@ -132,11 +132,13 @@ async def main() -> int:
             subscriber_service = SubscriberService(settings, db, bot)
             stats = await subscriber_service.run_daily_digests()
             logger.info(
-                "Рассылка подписчикам: получателей=%s, сообщений=%s, ролей собрано=%s, со сбоем=%s",
+                "Рассылка подписчикам: получателей=%s, сообщений=%s, ролей собрано=%s, "
+                "со сбоем=%s, HH ограничил=%s",
                 stats.subscribers,
                 stats.messages,
                 stats.roles_collected,
                 len(stats.failed_roles),
+                len(stats.limited_roles),
             )
             if admin_id:
                 lines = [
@@ -149,6 +151,11 @@ async def main() -> int:
                     # Без этой строки сбой сбора выглядит так же, как пустой день.
                     lines.append(
                         f"⚠️ Не собрались роли: {', '.join(stats.failed_roles)}"
+                    )
+                if stats.limited_roles:
+                    lines.append(
+                        "⚠️ HH ограничил запросы, подборка неполная: "
+                        f"{', '.join(stats.limited_roles)}"
                     )
                 await _notify_admin(bot, admin_id, "\n".join(lines))
             return 0

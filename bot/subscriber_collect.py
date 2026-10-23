@@ -18,11 +18,25 @@ logger = logging.getLogger(__name__)
 GETMATCH_API_URL = "https://getmatch.ru/api/offers"
 
 
+class SourceLimited(Exception):
+    """Площадка ограничила запросы (HTTP 403): собранное неполное, но годное.
+
+    Несёт то, что успело собраться, — подписчики получат хотя бы это, а админ
+    узнает, что роль собрана не целиком.
+    """
+
+    def __init__(self, source: str, vacancies: list[Vacancy]) -> None:
+        super().__init__(f"{source}: доступ ограничен (HTTP 403)")
+        self.source = source
+        self.vacancies = vacancies
+
+
 async def collect_for_role(settings: Settings, role: Role) -> list[Vacancy]:
     results: dict[str, Vacancy] = {}
+    hh_vacancies, hh_limited = await _fetch_hh(settings, role)
 
     for source, vacancies in [
-        ("hh.ru", await _fetch_hh(settings, role)),
+        ("hh.ru", hh_vacancies),
         ("careers", await _fetch_careers(settings, role)),
         ("geekjob.ru", await _fetch_geekjob(role)),
     ]:
@@ -38,7 +52,10 @@ async def collect_for_role(settings: Settings, role: Role) -> list[Vacancy]:
             if role.matcher(vacancy.title):
                 results[vacancy.uid] = vacancy
 
-    return dedupe_by_title_company(list(results.values()))
+    collected = dedupe_by_title_company(list(results.values()))
+    if hh_limited:
+        raise SourceLimited("hh.ru", collected)
+    return collected
 
 
 async def _fetch_getmatch(role: Role) -> list[Vacancy]:
@@ -76,14 +93,16 @@ async def _fetch_getmatch(role: Role) -> list[Vacancy]:
     return list(results.values())
 
 
-async def _fetch_hh(settings: Settings, role: Role) -> list[Vacancy]:
+async def _fetch_hh(settings: Settings, role: Role) -> tuple[list[Vacancy], bool]:
+    """Вакансии с HH и признак, что HH ограничил запросы (ответил 403)."""
     parser = HHParser(settings)
     vacancies = await parser.fetch_for_queries(
         role.hh_queries,
         role.matcher,
         professional_roles=role.hh_professional_roles,
     )
-    bigtech = await parser.fetch_bigtech(
+    # HH уже отказал на основном поиске — к бигтеху идти незачем, будет тот же 403.
+    bigtech = [] if parser.forbidden_hit else await parser.fetch_bigtech(
         role.matcher,
         role.hh_queries,
         role.hh_professional_roles,
@@ -91,7 +110,7 @@ async def _fetch_hh(settings: Settings, role: Role) -> list[Vacancy]:
     merged = {vacancy.uid: vacancy for vacancy in vacancies}
     for vacancy in bigtech:
         merged[vacancy.uid] = vacancy
-    return list(merged.values())
+    return list(merged.values()), parser.forbidden_hit
 
 
 async def _fetch_careers(settings: Settings, role: Role) -> list[Vacancy]:

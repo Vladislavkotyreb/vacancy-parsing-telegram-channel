@@ -42,6 +42,9 @@ class HHParser(BaseParser):
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        # HH ответил 403 хотя бы раз: собранное неполное. Подписочный сбор
+        # сообщает об этом админу, иначе роль тихо собиралась бы пустой.
+        self.forbidden_hit = False
 
     async def fetch(self) -> list[Vacancy]:
         results: dict[str, Vacancy] = {}
@@ -128,12 +131,16 @@ class HHParser(BaseParser):
         matcher: Callable[[str], bool],
         queries: tuple[str, ...] | None = None,
         professional_roles: tuple[int, ...] = (),
+        stop_on_forbidden: bool = False,
     ) -> None:
         period = self._period_days()
         added = 0
         search_queries = queries or tuple(BIGTECH_SEARCH_QUERIES)
+        forbidden = False
 
         for company_name, employer_id in BIGTECH_HH_EMPLOYERS:
+            if forbidden:
+                break
             for query in search_queries:
                 before = len(results)
                 params: dict[str, Any] = {
@@ -146,7 +153,7 @@ class HHParser(BaseParser):
                 if professional_roles:
                     params["professional_role"] = professional_roles
 
-                await self._search(
+                blocked = await self._search(
                     session,
                     results,
                     params,
@@ -155,6 +162,11 @@ class HHParser(BaseParser):
                     forbidden=False,
                 )
                 added += len(results) - before
+                # Канал по-прежнему проходит всех работодателей. Подписочному
+                # сбору после 403 продолжать незачем — дальше будут те же отказы.
+                if blocked and stop_on_forbidden:
+                    forbidden = True
+                    break
 
         if added:
             logger.info("HH.ru bigtech employers: +%s вакансий", added)
@@ -168,7 +180,7 @@ class HHParser(BaseParser):
         results: dict[str, Vacancy] = {}
         async with aiohttp.ClientSession(headers=self._headers()) as session:
             await self._fetch_bigtech_employers(
-                session, results, matcher, queries, professional_roles
+                session, results, matcher, queries, professional_roles, stop_on_forbidden=True
             )
         return list(results.values())
 
@@ -189,6 +201,7 @@ class HHParser(BaseParser):
             params = {**base_params, "page": page}
             async with session.get(self.API_URL, params=_flatten_params(params)) as resp:
                 if resp.status == 403:
+                    self.forbidden_hit = True
                     logger.warning(
                         "HH.ru API 403 (auth=%s). Проверьте HH_ACCESS_TOKEN и HH_USER_AGENT.",
                         "yes" if self.settings.hh_access_token else "no",

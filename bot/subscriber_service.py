@@ -16,7 +16,7 @@ from bot.dates import dedupe_by_title_company, is_fresh
 from bot.models import Vacancy
 from bot.roles import get_role
 from bot.russian import format_digest_roles_label
-from bot.subscriber_collect import collect_for_role
+from bot.subscriber_collect import SourceLimited, collect_for_role
 from bot.subscriber_formatters import format_subscriber_digest
 
 logger = logging.getLogger(__name__)
@@ -30,6 +30,9 @@ class DigestStats:
     # Роли, сбор которых упал. Без этого списка провал сбора снаружи неотличим
     # от «сегодня новых вакансий нет»: и там и там подписчику не уходит DM.
     failed_roles: list[str] = field(default_factory=list)
+    # Роли, на которых HH ответил 403: подписчики получили неполную подборку.
+    # Раньше такая роль тихо собиралась пустой — снаружи это не было видно.
+    limited_roles: list[str] = field(default_factory=list)
 
 
 class SubscriberService:
@@ -44,13 +47,14 @@ class SubscriberService:
             logger.info("Подписчиков нет — рассылка пропущена")
             return DigestStats()
 
-        cache, failed_roles = await self._collect_roles_once(
+        cache, failed_roles, limited_roles = await self._collect_roles_once(
             self._needed_roles(subscribers)
         )
         stats = DigestStats(
             subscribers=len(subscribers),
             roles_collected=len(cache),
             failed_roles=failed_roles,
+            limited_roles=limited_roles,
         )
 
         for row in subscribers:
@@ -90,7 +94,9 @@ class SubscriberService:
 
         logger.info("PREVIEW: активных подписчиков=%s", len(subscribers))
 
-        cache, _ = await self._collect_roles_once(self._needed_roles(subscribers))
+        cache, failed, limited = await self._collect_roles_once(self._needed_roles(subscribers))
+        if failed or limited:
+            logger.warning("PREVIEW: не собрались=%s, HH ограничил=%s", failed, limited)
 
         for row in subscribers:
             user_id = int(row["user_id"])
@@ -146,7 +152,7 @@ class SubscriberService:
 
     async def _collect_roles_once(
         self, role_ids: list[str]
-    ) -> tuple[dict[str, list[Vacancy]], list[str]]:
+    ) -> tuple[dict[str, list[Vacancy]], list[str], list[str]]:
         """Один сбор на роль за прогон, а не на каждого подписчика.
 
         `collect_for_role` не зависит от пользователя — персонализация начинается
@@ -155,6 +161,7 @@ class SubscriberService:
         """
         cache: dict[str, list[Vacancy]] = {}
         failed: list[str] = []
+        limited: list[str] = []
 
         for role_id in role_ids:
             role = get_role(role_id)
@@ -163,6 +170,12 @@ class SubscriberService:
                 continue
             try:
                 vacancies = await collect_for_role(self.settings, role)
+            except SourceLimited as exc:
+                # Отдаём то, что успело собраться, но помечаем роль для админа.
+                logger.warning("Роль %s: %s, собрано %s", role_id, exc, len(exc.vacancies))
+                limited.append(role_id)
+                cache[role_id] = exc.vacancies
+                continue
             except Exception:
                 # Сбойный источник у одной роли не должен лишать дайджеста всех
                 # остальных подписчиков.
@@ -174,11 +187,12 @@ class SubscriberService:
             logger.info("Роль %s: собрано %s вакансий", role_id, len(vacancies))
 
         logger.info(
-            "Сбор завершён: ролей=%s, из них со сбоем=%s",
+            "Сбор завершён: ролей=%s, со сбоем=%s, HH ограничил=%s",
             len(cache),
             len(failed),
+            len(limited),
         )
-        return cache, failed
+        return cache, failed, limited
 
     def _merge_for_roles(
         self, cache: dict[str, list[Vacancy]], role_ids: list[str]
