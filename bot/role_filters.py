@@ -61,6 +61,8 @@ def is_frontend_vacancy(title: str) -> bool:
 
 
 def is_backend_vacancy(title: str) -> bool:
+    if _belongs_to_data_role(title):
+        return False
     return _matches(title, BACKEND_INCLUDE, BACKEND_EXCLUDE)
 
 
@@ -170,6 +172,8 @@ def is_angular_developer_vacancy(title: str) -> bool:
 
 
 def is_python_developer_vacancy(title: str) -> bool:
+    if _belongs_to_data_role(title):
+        return False
     include = [re.compile(r"python|python[\s-]*разработ", re.I)]
     exclude = DEV_STACK_EXCLUDE + [
         re.compile(r"front[\s-]*end|фронтенд", re.I),
@@ -178,6 +182,8 @@ def is_python_developer_vacancy(title: str) -> bool:
 
 
 def is_java_developer_vacancy(title: str) -> bool:
+    if _belongs_to_data_role(title):
+        return False
     include = [re.compile(r"java|java[\s-]*разработ", re.I)]
     exclude = DEV_STACK_EXCLUDE + [
         re.compile(r"javascript|typescript", re.I),
@@ -187,6 +193,8 @@ def is_java_developer_vacancy(title: str) -> bool:
 
 
 def is_go_developer_vacancy(title: str) -> bool:
+    if _belongs_to_data_role(title):
+        return False
     include = [
         re.compile(r"golang|go[\s-]*lang", re.I),
         re.compile(r"\bgo\s+(?:developer|разработ|engineer|backend)", re.I),
@@ -283,3 +291,124 @@ def is_qa_automation_vacancy(title: str) -> bool:
         re.compile(r"manager|менедж|owner", re.I),
     ]
     return _matches(title, QA_AUTOMATION_TERMS, exclude)
+
+
+# --- Data ---
+# Профобласти HH здесь не помогают: ML-инженеров работодатели раскладывают по
+# пяти разным областям. Названия у data-профессий зато однозначные, так что
+# роль решается по заголовку.
+
+DATA_SCIENTIST_INCLUDE = [
+    re.compile(r"data[\s-]*scien", re.I),
+    re.compile(r"дата[\s-]*сайент", re.I),
+]
+
+# ML-роль определяется самой должностью. «LLM» в скобках у разработчика —
+# «Senior .NET Developer (LLM / RAG)», «Java Backend-разработчик AI / LLM
+# Platform» — это разработчик, а не ML-инженер, и остаётся в своей роли.
+ML_ENGINEER_INCLUDE = [
+    # ML как должность, а не как домен: «Golang-разработчик (домен AI&ML)» —
+    # Go-разработчик, тот же принцип, что с LLM ниже.
+    re.compile(
+        r"\bml[\s/-]*(?:engineer|инженер|разработ|developer|researcher|research"
+        r"|специалист|lead|лид|tech\s*lead|team\s*lead|architect|архитектор)",
+        re.I,
+    ),
+    re.compile(r"(?:head\s+of|команд\w*|руководител\w*|направлени\w*)\s+ml\b", re.I),
+    re.compile(r"machine\s*learning|машинн\w*\s+обучени", re.I),
+    re.compile(r"mlops|llmops|mlsecops", re.I),
+    re.compile(r"\bllm[\s-]*(?:engineer|инженер|разработ|developer)", re.I),
+    re.compile(r"\bai\b[\w\s/&-]{0,20}?\b(?:engineer|инженер|researcher)", re.I),
+    re.compile(r"computer\s*vision|компьютерн\w*\s+зрени", re.I),
+    re.compile(r"deep\s*learning", re.I),
+    re.compile(r"\bai\b[\s/-]*(?:tech\s*)?lead|tech\s*lead\s+ai\b", re.I),
+    re.compile(r"agentic\s+engineer|prompt\s*engineer|промпт[\s-]*инженер", re.I),
+]
+
+ML_ENGINEER_EXCLUDE = [
+    re.compile(r"data[\s-]*scien|дата[\s-]*сайент", re.I),  # это Data Scientist
+    re.compile(r"\bаналитик|\banalyst", re.I),
+    re.compile(r"\bqa\b|тестиров", re.I),
+    re.compile(r"owner|manager|менеджер", re.I),
+    re.compile(r"разметк|разметчик", re.I),
+]
+
+DATA_ENGINEER_INCLUDE = [
+    # Data Quality / Platform / Integration Engineer — одно слово между.
+    re.compile(r"data[\s-]+(?:\w+[\s-]+)?engineer|analytics\s*engineer", re.I),
+    re.compile(r"(?:data|дата)[\s-]*инженер|инженер\w*\s+данных", re.I),
+    re.compile(r"\bdwh\b|\betl\b|\belt\b", re.I),
+    re.compile(r"хранилищ\w*\s+данных|big\s*data", re.I),
+]
+
+DATA_ENGINEER_EXCLUDE = [
+    # «Аналитик DWH», «Системный аналитик (хранилище данных)» — аналитики,
+    # а «Аналитик-разработчик DWH» — разработчик.
+    re.compile(r"\bаналитик(?![\s-]*разработ)|\banalyst", re.I),
+    re.compile(r"дата[\s-]*центр|data\s*cent|\bцод", re.I),
+    re.compile(r"data[\s-]*scien", re.I),
+    re.compile(r"\bqa\b|тестиров", re.I),
+    re.compile(r"owner", re.I),
+]
+
+DATA_ANALYST_INCLUDE = [
+    re.compile(r"data[\s-]*(?:analy|аналит)|дата[\s-]*аналит", re.I),
+    # «Аналитик данных», а также с одним словом между: «Аналитик баз данных»,
+    # «Аналитик клиентских данных», «Ведущий аналитик больших данных».
+    re.compile(r"аналитик\w*\s+(?:\w+\s+)?данных", re.I),
+    re.compile(r"аналитик\w*\s+(?:dwh|sql)\b|\bsql[\s-]*аналитик", re.I),
+    re.compile(r"анализ\w*\s+данных", re.I),
+    # BI — только как должность: «BI на платформе» бывает и у разработчиков.
+    re.compile(r"\bbi[\s-]*(?:аналит|разработ|инженер|специалист|analyst|developer|engineer)", re.I),
+    re.compile(r"(?:аналитик|разработчик|специалист)\w*\s+(?:power\s*)?bi\b", re.I),
+]
+
+DATA_ANALYST_EXCLUDE = [
+    re.compile(r"продуктов\w*\s+аналит|product\s*analy", re.I),  # продуктовый аналитик
+    re.compile(r"data[\s-]*scien", re.I),
+    re.compile(r"системн\w*\s+аналит|system\s*analy", re.I),
+    re.compile(r"\bqa\b|тестиров", re.I),
+]
+
+PRODUCT_ANALYST_INCLUDE = [
+    re.compile(r"продуктов\w*\s+аналит", re.I),
+    re.compile(r"product\s*analy", re.I),
+    re.compile(r"аналитик\s+продукта\b", re.I),
+]
+
+PRODUCT_ANALYST_EXCLUDE = [
+    # Аналитика для продавцов на маркетплейсах — другая работа, не продукт в IT.
+    re.compile(r"маркетплейс|wildberries|поиск\s+ниш", re.I),
+    # «Продуктолог», «тренд-аналитик» — товарная экспертиза в ритейле.
+    re.compile(r"продуктолог|тренд[\s-]*аналит", re.I),
+    re.compile(r"owner|manager|менеджер", re.I),
+]
+
+
+def is_data_scientist_vacancy(title: str) -> bool:
+    return _matches(title, DATA_SCIENTIST_INCLUDE, [])
+
+
+def is_ml_engineer_vacancy(title: str) -> bool:
+    return _matches(title, ML_ENGINEER_INCLUDE, ML_ENGINEER_EXCLUDE)
+
+
+def is_data_engineer_vacancy(title: str) -> bool:
+    return _matches(title, DATA_ENGINEER_INCLUDE, DATA_ENGINEER_EXCLUDE)
+
+
+def is_data_analyst_vacancy(title: str) -> bool:
+    return _matches(title, DATA_ANALYST_INCLUDE, DATA_ANALYST_EXCLUDE)
+
+
+def is_product_analyst_vacancy(title: str) -> bool:
+    return _matches(title, PRODUCT_ANALYST_INCLUDE, PRODUCT_ANALYST_EXCLUDE)
+
+
+def _belongs_to_data_role(title: str) -> bool:
+    """Data/ML-инженеры с языком в названии раньше уходили в Backend.
+
+    Бэкенд отдаёт ровно то, что забирают data-роли, — не больше, чтобы
+    вакансия не потерялась между ролями.
+    """
+    return is_ml_engineer_vacancy(title) or is_data_engineer_vacancy(title)

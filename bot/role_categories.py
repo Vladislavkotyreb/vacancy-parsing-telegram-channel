@@ -42,6 +42,17 @@ CATEGORIES: dict[str, RoleCategory] = {
         title="QA",
         role_ids=("qa_manual", "qa_automation"),
     ),
+    "data": RoleCategory(
+        id="data",
+        title="Data",
+        role_ids=(
+            "data_scientist",
+            "ml_engineer",
+            "data_engineer",
+            "data_analyst",
+            "product_analyst",
+        ),
+    ),
 }
 
 CATEGORY_IDS = tuple(CATEGORIES.keys())

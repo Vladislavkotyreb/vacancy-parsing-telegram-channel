@@ -32,6 +32,7 @@
 | Backend | Python, Java, Go |
 | Продукт | Product Manager, Product Owner |
 | QA | Ручное тестирование, Автоматизация |
+| Data | Data Scientist, ML / AI Engineer, Data Engineer, Аналитик данных / BI, Продуктовый аналитик |
 
 В **канал** уходит только `product_designer` — фильтр `bot/filters.py`, он отсекает
 аналитиков, менеджеров, motion/графику и смежные роли. Для остальных ролей —

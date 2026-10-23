@@ -240,3 +240,117 @@ class MutualExclusionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+from bot.role_filters import (  # noqa: E402
+    is_data_analyst_vacancy,
+    is_data_engineer_vacancy,
+    is_data_scientist_vacancy,
+    is_go_developer_vacancy,
+    is_java_developer_vacancy,
+    is_ml_engineer_vacancy,
+    is_product_analyst_vacancy,
+)
+
+
+class DataRolesTest(unittest.TestCase):
+    """Заголовки из живой выдачи HH."""
+
+    def check(self, matcher, yes=(), no=()):
+        for title in yes:
+            self.assertTrue(matcher(title), f"должно попасть: {title}")
+        for title in no:
+            self.assertFalse(matcher(title), f"не должно попасть: {title}")
+
+    def test_data_scientist(self):
+        self.check(
+            is_data_scientist_vacancy,
+            yes=("Senior Data Scientist", "Data Scientist (Рекомендательные системы)",
+                 "Ведущий Специалист по исследованию данных (Data Science)", "Дата-сайентист"),
+            no=("Аналитик данных", "ML Engineer"),
+        )
+
+    def test_ml_engineer(self):
+        self.check(
+            is_ml_engineer_vacancy,
+            yes=("ML Engineer / Инженер машинного обучения", "ML-инженер (NLP / LLM)", "MLOps-инженер",
+                 "LLM-инженер / Специалист по большим языковым моделям", "AI Engineer", "AI-инженер",
+                 "AI Agent Engineer (NLP/LLM)", "Computer Vision engineer",
+                 "Ведущий инженер по машинному обучению и компьютерному зрению",
+                 "Руководитель команды ML/Lead ML Engineer", "AI Tech Lead / Team Lead (LLM/RAG, Python)",
+                 "Промпт-инженер / AI Prompt Engineer", "Middle Agentic Engineer (Перспективный AI)"),
+            no=(
+                # ML и LLM в скобках у разработчика — предметная область, не должность.
+                "Golang-разработчик (домен AI&ML)", "Python-разработчик (ML)",
+                "Senior .NET Developer (LLM / RAG)", "Ведущий Java Backend-разработчик AI / LLM Platform",
+                "Python-разработчик AI-сервисов (LLM / RAG)",
+                # Чужие профессии с ML в названии.
+                "Data Scientist (Computer Vision)", "Инженер-тестировщик в ML (middle/middle+)",
+                "Technical Product Owner (MLOps) / Руководитель направления",
+                "Инженер компьютерного зрения (разметка данных, CVAT)",
+                "Сценарист на YouTube-канал (нейросети, llm, ai-агенты)",
+            ),
+        )
+
+    def test_data_engineer(self):
+        self.check(
+            is_data_engineer_vacancy,
+            yes=("Data Engineer", "Big Data Engineer", "Data Quality Engineer", "Senior Data-инженер",
+                 "Ведущий инженер данных", "Разработчик DWH (Корпоративное хранилище данных)",
+                 "ETL-разработчик / Data Integration Engineer", "Аналитик-разработчик DWH Oracle (Junior+)",
+                 "Team Lead Data Engineering"),
+            no=("Аналитик DWH (SQL, ETL)", "Системный аналитик DWH", "Инженер по сетям передачи данных",
+                "Инженер дата-центра", "Data Center Engineer", "Database engineer / Разработчик баз данных"),
+        )
+
+    def test_data_analyst(self):
+        self.check(
+            is_data_analyst_vacancy,
+            yes=("Аналитик данных", "Data Analyst", "Data-аналитик", "Data аналитик", "BI-аналитик",
+                 "BI- разработчик (Senior)", "Разработчик Power BI", "Аналитик DWH", "Аналитик баз данных",
+                 "Аналитик баз данных/ SQL аналитик", "Ведущий аналитик больших данных",
+                 "Специалист по анализу данных"),
+            no=("Backend-разработчик (Python) — BI & AI направление", "JS-разработчик на BI-платформу",
+                "Системный аналитик DWH", "Продуктовый аналитик", "Data Scientist",
+                "Инженер по тестированию (QA Data Analyst)"),
+        )
+
+    def test_product_analyst(self):
+        self.check(
+            is_product_analyst_vacancy,
+            yes=("Продуктовый аналитик", "Product Analyst", "Senior Product Analyst (B2C, mobile)",
+                 "Аналитик продукта", "Руководитель продуктовой аналитики (Клиентские продукты)",
+                 "Бизнес-аналитик /Product Analyst (Fintech, Digital Lending)"),
+            no=("Бизнес-аналитик Продуктовой команды по развитию платежного сервиса СБП",
+                "Аналитик маркетплейсов / Продуктовый аналитик (поиск ниш)",
+                "Ведущий специалист отдела продуктовой и рыночной аналитики себестоимости",
+                "Тренд-аналитик / Продуктолог / Продуктовый аналитик (женская одежда)",
+                "Product Manager"),
+        )
+
+    def test_data_roles_do_not_overlap_on_plain_titles(self):
+        matchers = (is_data_scientist_vacancy, is_ml_engineer_vacancy, is_data_engineer_vacancy,
+                    is_data_analyst_vacancy, is_product_analyst_vacancy)
+        for title in ("Data Scientist / ML инженер", "Senior Data Scientist / MLE", "Дата-аналитик (Data Quality / ETL)",
+                      "Старший продуктовый аналитик данных", "Аналитик DWH", "Data Engineer"):
+            hits = [m.__name__ for m in matchers if m(title)]
+            self.assertEqual(len(hits), 1, f"{title}: {hits}")
+
+
+class BackendGivesUpOnlyDataRolesTest(unittest.TestCase):
+    def test_data_and_ml_engineers_leave_backend(self):
+        for title in ("Data Engineer (Python)", "ML Engineer (Python)", "AI Engineer / AI R&D Developer (Python)"):
+            self.assertFalse(is_python_developer_vacancy(title), title)
+        self.assertFalse(is_java_developer_vacancy("Data Engineer (Java/Scala)"))
+        self.assertFalse(is_go_developer_vacancy("Golang Data Engineer"))
+
+    def test_developers_in_ai_domain_stay(self):
+        self.assertTrue(is_go_developer_vacancy("Golang-разработчик (домен AI&ML)"))
+        self.assertTrue(is_java_developer_vacancy("Ведущий Java Backend-разработчик AI / LLM Platform"))
+        self.assertTrue(is_python_developer_vacancy("Python-разработчик AI-сервисов (LLM / RAG)"))
+        self.assertTrue(is_python_developer_vacancy("Senior Python Developer"))
+
+    def test_existing_roles_do_not_take_data_titles(self):
+        for title in ("Product Analyst", "Продуктовый аналитик", "Data Scientist"):
+            self.assertFalse(is_product_designer_vacancy(title), title)
+            self.assertFalse(is_product_manager_vacancy(title), title)

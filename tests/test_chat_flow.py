@@ -249,6 +249,13 @@ class ProductAndQaCategoriesTest(unittest.TestCase):
         labels = [btn.text for row in keyboard.inline_keyboard for btn in row]
         self.assertIn("Арт-директор", labels)
 
+    def test_data_category(self):
+        labels = [btn.text for row in specialty_keyboard().inline_keyboard for btn in row]
+        self.assertIn("Data", labels)
+        data = _callback_data(vacancy_keyboard("data", set()))
+        for role_id in ("data_scientist", "ml_engineer", "data_engineer", "data_analyst", "product_analyst"):
+            self.assertIn(f"{S2_ROLE}data:{role_id}", data)
+
     def test_draft_reads_new_categories(self):
         keyboard = vacancy_keyboard("qa", {"qa_automation"})
         self.assertEqual(_draft_from_keyboard(keyboard), {"qa_automation"})
