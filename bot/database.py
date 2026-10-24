@@ -150,6 +150,10 @@ class VacancyDatabase:
                 conn.execute("ALTER TABLE subscribers ADD COLUMN unsubscribed_at TEXT")
             if "unsubscribe_reason" not in subscriber_columns:
                 conn.execute("ALTER TABLE subscribers ADD COLUMN unsubscribe_reason TEXT")
+            # День (по TIMEZONE), когда подписчику ушло «новых вакансий нет»: не чаще
+            # раза в день, даже если рассылку перезапускают после обрыва сети.
+            if "last_empty_notice_on" not in subscriber_columns:
+                conn.execute("ALTER TABLE subscribers ADD COLUMN last_empty_notice_on TEXT")
 
             self._migrate_subscriber_roles(conn)
 
@@ -281,7 +285,6 @@ class VacancyDatabase:
 
     def set_subscriber_roles(self, user_id: int, roles: list[str]) -> None:
         unique_roles = list(dict.fromkeys(roles))
-        existing_roles = self.get_subscriber_roles(user_id)
         now = datetime.now(timezone.utc).isoformat()
         primary_role = unique_roles[0] if unique_roles else ""
 
@@ -311,9 +314,9 @@ class VacancyDatabase:
                     """,
                     (user_id, role),
                 )
-
-        if set(existing_roles) != set(unique_roles):
-            self.clear_subscriber_sent(user_id)
+        # Историю доставок (subscriber_sent) при смене ролей не трогаем: раньше
+        # она стиралась, и утром человек снова получал уже присланные вакансии.
+        # Вакансии новых ролей и так новые — у них другие uid.
 
     def replace_category_roles(
         self, user_id: int, category_role_ids: set[str], roles: list[str]
@@ -322,13 +325,6 @@ class VacancyDatabase:
         kept = [role for role in existing_roles if role not in category_role_ids]
         merged = list(dict.fromkeys(kept + roles))
         self.set_subscriber_roles(user_id, merged)
-
-    def clear_subscriber_sent(self, user_id: int) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                "DELETE FROM subscriber_sent WHERE user_id = ?",
-                (user_id,),
-            )
 
     def get_subscriber_roles(self, user_id: int) -> list[str]:
         with self._connect() as conn:
@@ -600,6 +596,20 @@ class VacancyDatabase:
                     data["roles"] = [data["role"]]
                 result.append(data)
             return result
+
+    def empty_notice_day(self, user_id: int) -> Optional[str]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT last_empty_notice_on FROM subscribers WHERE user_id = ?", (user_id,)
+            ).fetchone()
+            return row["last_empty_notice_on"] if row else None
+
+    def mark_empty_notice(self, user_id: int, day: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE subscribers SET last_empty_notice_on = ? WHERE user_id = ?",
+                (day, user_id),
+            )
 
     def broadcast_audience(self, include_starters: bool = False) -> list[int]:
         """Активные подписчики; с include_starters — ещё и те, кто нажимал /start,

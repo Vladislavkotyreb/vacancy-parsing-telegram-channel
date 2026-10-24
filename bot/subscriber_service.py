@@ -3,7 +3,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Iterable, Optional
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
 
 from aiogram import Bot
 from aiogram.enums import ParseMode
@@ -17,7 +23,7 @@ from bot.models import Vacancy
 from bot.roles import get_role
 from bot.russian import format_digest_roles_label
 from bot.subscriber_collect import SourceLimited, collect_for_role
-from bot.subscriber_formatters import format_subscriber_digest
+from bot.subscriber_formatters import format_empty_notice, format_subscriber_digest
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +39,8 @@ class DigestStats:
     # Роли, на которых HH ответил 403: подписчики получили неполную подборку.
     # Раньше такая роль тихо собиралась пустой — снаружи это не было видно.
     limited_roles: list[str] = field(default_factory=list)
+    # Сколько подписчиков получили «новых вакансий нет».
+    empty_notices: int = 0
 
 
 class SubscriberService:
@@ -73,9 +81,17 @@ class SubscriberService:
                     len(vacancies),
                     len(fresh),
                 )
-                stats.messages += await self._send_to_user(
-                    user_id, role_ids, fresh, len(vacancies)
+                sent, empty_notice = await self._send_to_user(
+                    user_id,
+                    role_ids,
+                    fresh,
+                    len(vacancies),
+                    roles_complete=self._roles_complete(
+                        role_ids, cache, failed_roles, limited_roles
+                    ),
                 )
+                stats.messages += sent
+                stats.empty_notices += int(empty_notice)
                 await asyncio.sleep(0.05)
             except TelegramForbiddenError:
                 logger.warning("Подписчик %s заблокировал бота — отписываем", user_id)
@@ -118,6 +134,15 @@ class SubscriberService:
 
             new_vacancies = self._filter_new_for_user(user_id, fresh)
             to_post = dedupe_by_title_company(new_vacancies)
+            complete = self._roles_complete(role_ids, cache, failed, limited)
+            if not to_post and complete and self.db.empty_notice_day(user_id) != self._today():
+                logger.info("PREVIEW user=%s: новых вакансий нет — уйдёт «новых нет»", user_id)
+            elif not to_post:
+                logger.info(
+                    "PREVIEW user=%s: новых вакансий нет — промолчим (%s)",
+                    user_id,
+                    "роль не собралась целиком" if not complete else "сегодня уже писали",
+                )
             if to_post:
                 titles = "; ".join(v.title[:50] for v in to_post[:5])
                 extra = f" (+{len(to_post) - 5})" if len(to_post) > 5 else ""
@@ -128,11 +153,23 @@ class SubscriberService:
                     titles,
                     extra,
                 )
-            else:
-                logger.info(
-                    "PREVIEW user=%s: новых вакансий нет — DM не уйдёт",
-                    user_id,
-                )
+
+    @staticmethod
+    def _roles_complete(
+        role_ids: list[str],
+        cache: dict[str, list[Vacancy]],
+        failed: list[str],
+        limited: list[str],
+    ) -> bool:
+        """Все роли подписчика собраны целиком — только тогда можно честно сказать
+        «новых вакансий нет». Сбой, ограничение HH или неизвестная роль — нельзя."""
+        return all(
+            role_id in cache and role_id not in failed and role_id not in limited
+            for role_id in role_ids
+        )
+
+    def _today(self) -> str:
+        return datetime.now(ZoneInfo(self.settings.timezone)).date().isoformat()
 
     @staticmethod
     def _roles_of(row: dict) -> list[str]:
@@ -229,7 +266,9 @@ class SubscriberService:
         role_ids: list[str],
         fresh_vacancies: list[Vacancy],
         total_found: int,
-    ) -> int:
+        roles_complete: bool = True,
+    ) -> tuple[int, bool]:
+        """(сколько сообщений ушло, было ли это «новых нет»)."""
         new_vacancies = self._filter_new_for_user(user_id, fresh_vacancies)
         to_post = dedupe_by_title_company(new_vacancies)
         role_label = format_digest_roles_label(role_ids)
@@ -242,12 +281,9 @@ class SubscriberService:
         )
 
         if included == 0:
-            logger.info(
-                "Подписчик %s roles=%s: новых вакансий нет — сообщение не отправляем",
-                user_id,
-                ",".join(role_ids),
+            return await self._send_empty_notice(
+                user_id, role_ids, format_empty_notice(role_ids), roles_complete
             )
-            return 0
 
         delivered: Optional[Message] = None
         for message in messages:
@@ -266,7 +302,29 @@ class SubscriberService:
             ",".join(role_ids),
             included,
         )
-        return len(messages)
+        return len(messages), False
+
+    async def _send_empty_notice(
+        self, user_id: int, role_ids: list[str], text: str, roles_complete: bool
+    ) -> tuple[int, bool]:
+        """«Новых вакансий нет» — раз в день и только когда это правда."""
+        roles = ",".join(role_ids)
+        if not roles_complete:
+            # Роль не собралась или HH её ограничил: вакансии могли быть, просто
+            # мы их не увидели. Промолчим — админ узнает об этом из отчёта.
+            logger.info("Подписчик %s roles=%s: новых нет, но сбор неполный — молчим", user_id, roles)
+            return 0, False
+
+        today = self._today()
+        if self.db.empty_notice_day(user_id) == today:
+            logger.info("Подписчик %s roles=%s: «новых нет» сегодня уже уходило", user_id, roles)
+            return 0, False
+
+        delivered = await self._safe_send(user_id, text)
+        self.db.mark_empty_notice(user_id, today)
+        self._remember_profile(user_id, delivered)
+        logger.info("Подписчик %s roles=%s: новых нет — отправили уведомление", user_id, roles)
+        return 1, True
 
     def _remember_profile(self, user_id: int, delivered: Optional[Message]) -> None:
         """Имя и username из ответа Телеграма на рассылку — для /users.

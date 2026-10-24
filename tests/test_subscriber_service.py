@@ -115,7 +115,7 @@ class SubscriberServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("product_designer", texts)
         self.assertNotIn("qa_manual", texts)
 
-    async def test_no_new_vacancies_sends_nothing(self):
+    async def test_no_new_vacancies_sends_one_notice_per_day(self):
         self.db.set_subscriber_roles(1001, ["product_designer"])
 
         with self._patch_collect():
@@ -123,12 +123,18 @@ class SubscriberServiceTest(unittest.IsolatedAsyncioTestCase):
         first_batch = self.bot.send_message.await_count
         self.assertGreater(first_batch, 0)
 
-        # Повтор: всё уже в subscriber_sent, новых нет — DM не уходит.
+        # Повтор: всё уже отправлено — уходит одно сообщение «новых нет».
         with self._patch_collect():
             stats = await self.service.run_daily_digests()
+        self.assertEqual(self.bot.send_message.await_count, first_batch + 1)
+        self.assertEqual(stats.empty_notices, 1)
+        self.assertIn("Новых вакансий", self._sent_texts()[-1])
 
-        self.assertEqual(self.bot.send_message.await_count, first_batch)
-        self.assertEqual(stats.messages, 0)
+        # Третий запуск в тот же день (например, после обрыва сети) — тишина.
+        with self._patch_collect():
+            stats = await self.service.run_daily_digests()
+        self.assertEqual(self.bot.send_message.await_count, first_batch + 1)
+        self.assertEqual(stats.empty_notices, 0)
 
     async def test_stale_vacancies_are_filtered(self):
         old = Vacancy(
@@ -148,8 +154,9 @@ class SubscriberServiceTest(unittest.IsolatedAsyncioTestCase):
         with self._patch_collect(side_effect=only_old):
             stats = await self.service.run_daily_digests()
 
-        self.bot.send_message.assert_not_awaited()
-        self.assertEqual(stats.messages, 0)
+        # Старая вакансия не уходит; вместо неё — «новых нет».
+        self.assertEqual(stats.empty_notices, 1)
+        self.assertNotIn("Старая вакансия", " ".join(self._sent_texts()))
 
     async def test_no_subscribers_skips_collection_entirely(self):
         with self._patch_collect():

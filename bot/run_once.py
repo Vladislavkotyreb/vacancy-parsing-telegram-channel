@@ -146,6 +146,7 @@ async def main() -> int:
                     f"Активных подписчиков: {stats.subscribers}",
                     f"Отправлено сообщений: {stats.messages}",
                     f"Ролей собрано: {stats.roles_collected}",
+                    f"Написали «новых нет»: {stats.empty_notices}",
                 ]
                 if stats.failed_roles:
                     # Без этой строки сбой сбора выглядит так же, как пустой день.
