@@ -635,3 +635,77 @@ class ProductManagerGoodsTest(unittest.TestCase):
             "Специалист по развитию сайта и приложения (Product manager, fashion / e-com)"))
         self.assertTrue(is_product_manager_vacancy("Product Manager (мобильное приложение аптеки)"))
         self.assertFalse(is_product_manager_vacancy("Продуктовый менеджер (Аптеки)"))
+
+
+from bot.role_filters import is_php_developer_vacancy  # noqa: E402
+from bot.role_categories import get_category  # noqa: E402
+from bot.roles import ROLES  # noqa: E402
+
+
+class PhpDeveloperTest(unittest.TestCase):
+    """Заголовки — из живой выдачи HH за 3 дня (24.10.2026)."""
+
+    def test_php_titles(self):
+        for title in [
+            "PHP-разработчик",
+            "Middle+/Senior PHP Developer (Symfony)",
+            "Back end PHP/Simfony разработчик (middle/senior)",
+            "Программист PHP (Symphony)",
+            "Ведущий PHP (Laravel) разработчик",
+            "PHP Team Lead (Backend)",
+            "Технический лидер команды (php)",
+            "Стажер/PHP-разработчик",
+            "Go/PHP разработчик",
+        ]:
+            self.assertTrue(is_php_developer_vacancy(title), title)
+
+    def test_fullstack_on_php_is_kept(self):
+        # В отличие от Python/Java/Go: четверть PHP-вакансий — fullstack.
+        for title in [
+            "Fullstack PHP-разработчик",
+            "Разработчик полного цикла / Fullstack-разработчик PHP / Laravel + Vue (Middle+ / Senior)",
+            "Senior Fullstack-разработчик (1С-Битрикс + Vue.js)",
+        ]:
+            self.assertTrue(is_php_developer_vacancy(title), title)
+
+    def test_bitrix_developers_without_word_php(self):
+        for title in [
+            "Разработчик Битрикс24 (коробочная версия)",
+            "Программист Битрикс 24 (офис)",
+            "Веб-программист Битрикс",
+            "Bitrix- разработчик",
+            "Разработчик сайта на 1с Битрикс НЕ УДАЛЕННО",
+            "Разработчик / Вебмастер / WordPress / Full stack",
+        ]:
+            self.assertTrue(is_php_developer_vacancy(title), title)
+
+    def test_bitrix_admins_sales_and_analysts_are_not_php(self):
+        for title in [
+            "Администратор Битрикс24",
+            "Специалист по внедрению Битрикс24 (интегратор Битрикс24)",
+            "Интегратор CRM Битрикс24/AMO CRM",
+            "Менеджер по продажам Битрикс24 (B2B, полный цикл)",
+            "Менеджер продукта Bitrix24",
+            "Системный аналитик 1С-Битрикс / Bitrix24 / e-commerce",
+            "Руководитель проекта 1С и Битрикс24",
+            "Разработчик 1С и CRM (Bitrix)",
+            "Project Manager/Бизнес-аналитик (CRM: Bitrix24, amoCRM)",
+        ]:
+            self.assertFalse(is_php_developer_vacancy(title), title)
+
+    def test_other_stacks_and_roles_are_not_php(self):
+        for title in [
+            "Python-разработчик",
+            "Golang-разработчик (Middle+ / Senior)",
+            "Frontend-разработчик (PHP шаблоны)",
+            "QA Engineer (PHP)",
+            "DevOps-инженер (PHP-проекты)",
+            "Преподаватель PHP",
+            "Data Engineer (PHP, ETL)",
+        ]:
+            self.assertFalse(is_php_developer_vacancy(title), title)
+
+    def test_php_role_is_in_backend_menu(self):
+        self.assertIn("backend_php", get_category("backend").role_ids)
+        self.assertEqual(ROLES["backend_php"].button_label, "Backend | PHP")
+        self.assertLessEqual(len("s2:role:backend:backend_php".encode()), 64)

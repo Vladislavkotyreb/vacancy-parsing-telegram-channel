@@ -29,7 +29,7 @@
 |---------------|----------|
 | Дизайн | UX/UI \| Продуктовый дизайнер, Коммуникационный дизайнер, Графический дизайнер, Арт-директор |
 | Frontend | React, Vue, Angular |
-| Backend | Python, Java, Go |
+| Backend | Python, Java, Go, PHP |
 | Продукт | Product Manager, Product Owner |
 | QA | Ручное тестирование, Автоматизация |
 | Data | Data Scientist, ML / AI Engineer, Data Engineer, Аналитик данных / BI, Продуктовый аналитик, Data Governance |

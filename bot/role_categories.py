@@ -30,7 +30,7 @@ CATEGORIES: dict[str, RoleCategory] = {
     "backend": RoleCategory(
         id="backend",
         title="Backend",
-        role_ids=("backend_python", "backend_java", "backend_go"),
+        role_ids=("backend_python", "backend_java", "backend_go", "backend_php"),
     ),
     "product": RoleCategory(
         id="product",

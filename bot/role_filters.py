@@ -207,6 +207,38 @@ def is_go_developer_vacancy(title: str) -> bool:
     return _matches(title, include, exclude)
 
 
+# PHP: язык и фреймворки — сразу; Битрикс и CMS — только с признаком разработки.
+# По «Битрикс24» на HH в основном администраторы, внедренцы и продажи, а
+# «Разработчик Битрикс» и «Программист Битрикс 24» пишут на PHP.
+_PHP_DEV = r"разработ|программист|developer|engineer|team\s*lead|tech\s*lead|тимлид|техлид"
+_PHP_PLATFORM = r"битрикс|bitrix|wordpress|drupal|magento|opencart"
+PHP_INCLUDE = [
+    re.compile(r"\bphp\b|laravel|symfony|simfony|symphony|\byii\b", re.I),
+    re.compile(rf"(?:{_PHP_PLATFORM}).*(?:{_PHP_DEV})|(?:{_PHP_DEV}).*(?:{_PHP_PLATFORM})", re.I),
+]
+# Fullstack оставляем, в отличие от Python/Java/Go: это четверть PHP-вакансий,
+# и бэкенд в них — PHP. Поэтому DEV_STACK_EXCLUDE без fullstack.
+PHP_EXCLUDE = [
+    re.compile(r"\bqa\b|quality assurance|тестиров", re.I),
+    re.compile(r"devops|sre|site reliability", re.I),
+    re.compile(r"дизайн|designer|design\b", re.I),
+    re.compile(r"product\s*manager|project\s*manager|продуктов(?:ый|ого)\s*менедж", re.I),
+    re.compile(r"менеджер\s+(?:по|продукта|проект)|руководител\w*\s+проект|продаж|\bsales\b", re.I),
+    re.compile(r"аналитик|analyst", re.I),
+    re.compile(r"преподавател|наставник|teacher", re.I),
+    # Чистый фронтенд; «Fullstack (PHP + frontend)» не трогаем.
+    re.compile(r"^(?!.*(?:full|фулл|фулст|back|бэк)).*(?:front[\s-]*end|фронт[\s-]*енд)", re.I),
+    # 1С — не PHP; «1С-Битрикс» — PHP.
+    re.compile(r"\b1[сc]\b(?![\s:-]*(?:битрикс|bitrix))", re.I),
+]
+
+
+def is_php_developer_vacancy(title: str) -> bool:
+    if _belongs_to_data_role(title):
+        return False
+    return _matches(title, PHP_INCLUDE, PHP_EXCLUDE)
+
+
 # --- Продукт и QA ---
 # Общий фон для менеджерских и QA-ролей: не забирать дизайн и разработку.
 PRODUCT_QA_EXCLUDE = [

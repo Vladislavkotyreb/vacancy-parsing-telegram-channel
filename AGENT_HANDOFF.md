@@ -132,7 +132,7 @@ deploy/isp/
 |---------------|----------|----------|----------------------|
 | Дизайн | `product_designer`, `communication_designer`, `graphic_designer`, `art_director` | да | только `art_director`: 12, 34 |
 | Frontend | `frontend_react`, `frontend_vue`, `frontend_angular` | нет | — |
-| Backend | `backend_python`, `backend_java`, `backend_go` | нет | — |
+| Backend | `backend_python`, `backend_java`, `backend_go`, `backend_php` | нет | — |
 | Продукт | `product_manager`, `product_owner` | нет | 73 |
 | QA | `qa_manual`, `qa_automation` | нет | 124 |
 | Data | `data_scientist`, `ml_engineer`, `data_engineer`, `data_analyst`, `product_analyst`, `data_governance` | нет | — |

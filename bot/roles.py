@@ -22,6 +22,7 @@ from bot.role_filters import (
     is_head_of_engineering_vacancy,
     is_head_of_product_vacancy,
     is_java_developer_vacancy,
+    is_php_developer_vacancy,
     is_ml_engineer_vacancy,
     is_product_analyst_vacancy,
     is_product_manager_vacancy,
@@ -162,6 +163,18 @@ ROLES: dict[str, Role] = {
         geekjob_queries=("golang", "go developer", "go backend"),
         uses_getmatch=False,
         matcher=is_go_developer_vacancy,
+    ),
+    "backend_php": Role(
+        id="backend_php",
+        label="PHP-разработчика",
+        button_label="Backend | PHP",
+        # «битрикс»/«bitrix» приносят в основном администраторов и продажи —
+        # их отсекает фильтр, зато так находятся «Программист Битрикс 24» и
+        # «Разработчик Битрикс», где слова PHP нет. «yii» на HH ищет мусор.
+        hh_queries=("php", "php разработчик", "php developer", "laravel", "symfony", "битрикс", "bitrix"),
+        geekjob_queries=("php", "laravel", "symfony", "битрикс"),
+        uses_getmatch=False,
+        matcher=is_php_developer_vacancy,
     ),
     "product_manager": Role(
         id="product_manager",
