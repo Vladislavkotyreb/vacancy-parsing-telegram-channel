@@ -585,3 +585,53 @@ class LeadersQaFindingsTest(unittest.TestCase):
         for matcher, title, expected in self.cases():
             with self.subTest(role=matcher.__name__, title=title):
                 self.assertEqual(matcher(title), expected)
+
+
+class ProductManagerGoodsTest(unittest.TestCase):
+    """«Менеджер по продукту» в фарме, FMCG, одежде, дистрибуции техники — не IT.
+    Заголовки из ночной выдачи HH: 248 вакансий, около четверти — товарные линейки."""
+
+    def test_goods_product_managers_rejected(self):
+        for title in (
+            "OTC продакт-менеджер",
+            "RX продакт-менеджер",
+            "Senior Product manager, Immunology",
+            "Менеджер по продукту (Product Manager лекарственные препараты, БАДы)",
+            "Product Manager / R&D Manager (Cosmetics, China)",
+            "Продакт-менеджер (Парфюмерия/Ароматика)",
+            "Младший Продукт Менеджер проекта Деликатесы из дичи",
+            "Менеджер продукта/Product Manager (Fashion)",
+            "Продакт-менеджер (Product Manager) в сегменте «Обувь»",
+            "Продакт менеджер по работе с фабриками ЮВА/байер",
+            "Продакт-менеджер по трехфазным ИБП",
+            "Продукт-менеджер по SSD и серверной памяти (Product Manager)",
+            "Продакт-менеджер-Менеджер по продукту (совместимые картриджи для принтеров)",
+            "Продакт-менеджер (строительная химия)",
+            "Старший продакт менеджер (сварочное оборудование)",
+            "Продакт-менеджер в производстве физических товаров (офис)",
+            "Менеджер по продукту / Product-manager в девелопменте",
+            "Менеджер по запуску продукции | младший менеджер по продукту (маркетплейсы)",
+        ):
+            self.assertFalse(is_product_manager_vacancy(title), title)
+
+    def test_digital_product_managers_kept(self):
+        for title in (
+            "Product Manager (Медданные)",
+            "Коммерческий продуктовый менеджер по направлению ИИ-решений",  # «коммерческий» ⊃ «мерч»
+            "Технический продуктовый менеджер по аппаратным платформам сетевого оборудования",
+            "Product Manager (веб-сервис для ресторанной сети)",
+            "Менеджер продукта ЭДО",
+            "Product manager (релевантность поиска)",  # «релевантность» ⊃ «реле»
+            "Product Manager внутренних инструментов",  # не «строительный инструмент»
+            "Product Manager (импортозамещение)",
+            "Старший менеджер продукта (Подписка Ozon Premium)",
+            "Product manager в Т‑Бизнес",
+        ):
+            self.assertTrue(is_product_manager_vacancy(title), title)
+
+    def test_digital_marker_overrides_industry_word(self):
+        """Отрасль — не приговор, если продукт цифровой."""
+        self.assertTrue(is_product_manager_vacancy(
+            "Специалист по развитию сайта и приложения (Product manager, fashion / e-com)"))
+        self.assertTrue(is_product_manager_vacancy("Product Manager (мобильное приложение аптеки)"))
+        self.assertFalse(is_product_manager_vacancy("Продуктовый менеджер (Аптеки)"))

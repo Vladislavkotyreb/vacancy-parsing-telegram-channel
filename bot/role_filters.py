@@ -241,6 +241,30 @@ QA_AUTOMATION_TERMS = [
 ]
 
 
+# «Менеджер по продукту» по-русски — ещё и ведение товарной линейки в фарме,
+# FMCG, одежде, дистрибуции техники. В ночной выдаче HH таких было около
+# четверти. Отраслевое слово не отсекает вакансию, если рядом есть цифровой
+# признак: «Product manager, fashion — развитие сайта и приложения» — это
+# цифровой продукт, а «Product Manager (Fashion)» в бренде одежды — ассортимент.
+_PM_DIGITAL = (
+    r"digital|сайт|приложени|\bapp\b|e-?com|онлайн|online|мобильн|mobile|платформ|platform"
+    r"|saas|\bit\b|\bит\b|\bai\b|\bии\b|веб|web|цифров|интернет"
+)
+_PM_GOODS_DOMAINS = (
+    r"препарат|\bбад|\botc\b|\brx\b|фарм|неврол|психиатр|immunolog|иммунол|офтальм|эндоскоп"
+    r"|госпитал|аптек|косметик|cosmetic|парфюм|аромат|beauty|fmcg|пищев|деликатес|лакомств"
+    r"|кофейн|упаковк|r&d|\bдич|обув|джинс|fashion|швейн|\bмерч|ювелир|аксессуар|фабрик|байер"
+    r"|китай|продукци|физическ\w*\s+товар|девелопмент|садов"
+    r"|\bибп\b|\bssd\b|картридж|телевизор|бытов\w*\s+техник|климатич|сварочн"
+    r"|строительн\w*\s+(?:хими|инструмент)|крепёж|крепеж|\bбан[иья]\b|сейф|свч|видеонаблюд"
+    r"|\bреле\b|датчик|серверн\w*\s+шкаф|netapp|grandstream|мультимеди|компьютерн\w*\s+техник"
+    r"|этикетк|энерги|road\s+construction|оборудование\s+для"
+)
+PRODUCT_MANAGER_GOODS_EXCLUDE = [
+    re.compile(rf"^(?!.*(?:{_PM_DIGITAL})).*(?:{_PM_GOODS_DOMAINS})", re.I),
+]
+
+
 def is_product_manager_vacancy(title: str) -> bool:
     include = [
         re.compile(r"product\s*manager", re.I),
@@ -250,7 +274,7 @@ def is_product_manager_vacancy(title: str) -> bool:
         re.compile(r"менеджер\s*продукт", re.I),
         re.compile(r"менеджер\s+по\s+продукт", re.I),
     ]
-    exclude = PRODUCT_QA_EXCLUDE + NON_IT_DOMAIN_EXCLUDE + [
+    exclude = PRODUCT_QA_EXCLUDE + NON_IT_DOMAIN_EXCLUDE + PRODUCT_MANAGER_GOODS_EXCLUDE + [
         re.compile(r"project|проджект", re.I),
         re.compile(r"owner|оунер|владелец", re.I),
         re.compile(r"\bqa\b|тестиров", re.I),
