@@ -34,6 +34,13 @@ except ImportError:
 
 from bot.config import Settings
 from bot.database import VacancyDatabase
+from bot.digest_more import (
+    DIGEST_MORE,
+    NOTHING_LEFT,
+    pending_overflow,
+    send_overflow,
+    user_lock,
+)
 from bot.role_categories import CATEGORIES, CATEGORY_IDS, get_category
 from bot.roles import ROLES
 from bot.russian import format_subscription_roles, format_success_roles
@@ -608,6 +615,46 @@ async def cb_users_page(
     await callback.message.edit_text(
         text, parse_mode="HTML", reply_markup=keyboard, disable_web_page_preview=True
     )
+
+
+@router.callback_query(F.data.startswith(DIGEST_MORE))
+async def cb_digest_more(
+    callback: CallbackQuery, db: VacancyDatabase, settings: Settings, bot: Bot
+) -> None:
+    """«Показать остальные» под подборкой: остаток — один раз, потом кнопка исчезает.
+
+    Остаток берётся по id нажавшего, а из callback — только дата подборки,
+    так что чужую подборку через подделанный callback не получить.
+    """
+    if not callback.data or not callback.from_user:
+        return
+    user_id = callback.from_user.id
+    day = callback.data[len(DIGEST_MORE):]
+
+    async with user_lock(user_id):
+        vacancies = pending_overflow(db, settings, user_id, day)
+        if not vacancies:
+            db.clear_digest_overflow(user_id, day)
+            await callback.answer(NOTHING_LEFT)
+            await _drop_button(callback)
+            return
+
+        await callback.answer()
+        await send_overflow(bot, db, user_id, vacancies)
+        db.clear_digest_overflow(user_id, day)
+
+    logger.info("Подписчик %s открыл остаток подборки %s: %s вакансий", user_id, day, len(vacancies))
+    await _drop_button(callback)
+
+
+async def _drop_button(callback: CallbackQuery) -> None:
+    if not callback.message:
+        return
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception as exc:
+        # Старое сообщение (недоступно боту) или кнопку уже убрали — не страшно.
+        logger.info("Кнопку под подборкой не убрать: %s", exc)
 
 
 @router.message()

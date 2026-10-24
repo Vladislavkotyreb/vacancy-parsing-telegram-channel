@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
+from dataclasses import asdict
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterable, Iterator, Optional
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
@@ -137,6 +139,18 @@ class VacancyDatabase:
                     user_id INTEGER NOT NULL,
                     sent_at TEXT NOT NULL,
                     PRIMARY KEY (broadcast_id, user_id)
+                );
+
+                -- Что не влезло в последнюю подборку подписчика: отдаётся по кнопке
+                -- «Показать остальные». Пишет рассылка (cron), читает чат-бот —
+                -- это разные процессы, поэтому через базу. На человека хранится
+                -- только последняя подборка; digest_day — её дата по TIMEZONE.
+                CREATE TABLE IF NOT EXISTS digest_overflow (
+                    user_id INTEGER NOT NULL,
+                    digest_day TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    vacancy_json TEXT NOT NULL,
+                    PRIMARY KEY (user_id, position)
                 );
                 """
             )
@@ -695,6 +709,51 @@ class VacancyDatabase:
                 ),
             )
 
+    def unsent_to_subscriber(self, user_id: int, vacancies: Iterable[Vacancy]) -> list[Vacancy]:
+        """Те, что подписчику ещё не уходили — ни по id, ни дублем с другого сайта."""
+        return [
+            vacancy
+            for vacancy in vacancies
+            if not self.is_sent_to_subscriber(user_id, vacancy.uid)
+            and not self.is_sent_to_subscriber_by_dedup(user_id, vacancy.title, vacancy.company)
+        ]
+
+    def replace_digest_overflow(self, user_id: int, day: str, vacancies: list[Vacancy]) -> None:
+        """Остаток подборки вместо прежнего; пустой список — просто стереть прежний."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM digest_overflow WHERE user_id = ?", (user_id,))
+            conn.executemany(
+                """
+                INSERT INTO digest_overflow (user_id, digest_day, position, vacancy_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                [
+                    (user_id, day, position, _vacancy_to_json(vacancy))
+                    for position, vacancy in enumerate(vacancies)
+                ],
+            )
+
+    def get_digest_overflow(self, user_id: int, day: str) -> list[Vacancy]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT vacancy_json FROM digest_overflow
+                WHERE user_id = ? AND digest_day = ?
+                ORDER BY position
+                """,
+                (user_id, day),
+            ).fetchall()
+        return [_vacancy_from_json(row["vacancy_json"]) for row in rows]
+
+    def clear_digest_overflow(self, user_id: int, day: str) -> None:
+        """Стирает остаток только той подборки, кнопку которой нажали: если рассылка
+        успела записать новый, он остаётся для новой кнопки."""
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM digest_overflow WHERE user_id = ? AND digest_day = ?",
+                (user_id, day),
+            )
+
     def _day_bounds_utc(self, timezone_name: str) -> tuple[str, str]:
         tz = ZoneInfo(timezone_name)
         today = datetime.now(tz).date()
@@ -847,3 +906,17 @@ class VacancyDatabase:
             "posted_today": int(posted_today["cnt"]),
             "last_run": dict(last_run) if last_run else None,
         }
+
+
+def _vacancy_to_json(vacancy: Vacancy) -> str:
+    data = asdict(vacancy)
+    if vacancy.published_at:
+        data["published_at"] = vacancy.published_at.isoformat()
+    return json.dumps(data, ensure_ascii=False)
+
+
+def _vacancy_from_json(raw: str) -> Vacancy:
+    data = json.loads(raw)
+    if data.get("published_at"):
+        data["published_at"] = datetime.fromisoformat(data["published_at"])
+    return Vacancy(**data)

@@ -13,12 +13,13 @@ except ImportError:
 
 from aiogram import Bot
 from aiogram.enums import ParseMode
-from aiogram.types import Message
+from aiogram.types import InlineKeyboardMarkup, Message
 from aiogram.exceptions import TelegramForbiddenError, TelegramNetworkError, TelegramRetryAfter
 
 from bot.config import Settings
 from bot.database import VacancyDatabase
 from bot.dates import dedupe_by_title_company, ensure_aware, is_fresh
+from bot.digest_more import more_keyboard
 from bot.models import Vacancy
 from bot.roles import get_role
 from bot.russian import format_digest_roles_label
@@ -29,8 +30,8 @@ logger = logging.getLogger(__name__)
 
 # Больше — не в один день. У нового подписчика «новые» — все вакансии за 72 ч:
 # у продакт-менеджера их ~240, это ~20 сообщений подряд и повод отписаться.
-# Отправляем самые свежие, остальные остаются неотмеченными и приходят в
-# следующие дни, пока не устареют.
+# Отправляем самые свежие; остальные — по кнопке «Показать остальные»
+# (bot/digest_more.py), а кто не нажал, получит их в следующие дни, пока не устареют.
 MAX_VACANCIES_PER_DIGEST = 30
 
 
@@ -138,8 +139,7 @@ class SubscriberService:
                 len(fresh),
             )
 
-            new_vacancies = self._filter_new_for_user(user_id, fresh)
-            all_new = dedupe_by_title_company(new_vacancies)
+            all_new = dedupe_by_title_company(self.db.unsent_to_subscriber(user_id, fresh))
             to_post = self._limit_freshest(all_new)
             complete = self._roles_complete(role_ids, cache, failed, limited)
             if not to_post and complete and self.db.empty_notice_day(user_id) != self._today():
@@ -153,11 +153,14 @@ class SubscriberService:
             if to_post:
                 titles = "; ".join(v.title[:50] for v in to_post[:5])
                 extra = f" (+{len(to_post) - 5})" if len(to_post) > 5 else ""
+                rest = len(all_new) - len(to_post)
+                button = f", кнопка «Показать остальные {rest}»" if rest else ""
                 logger.info(
-                    "PREVIEW user=%s: отправим %s вакансий (новых всего %s) — %s%s",
+                    "PREVIEW user=%s: отправим %s вакансий (новых всего %s%s) — %s%s",
                     user_id,
                     len(to_post),
                     len(all_new),
+                    button,
                     titles,
                     extra,
                 )
@@ -214,7 +217,7 @@ class SubscriberService:
         """Один сбор на роль за прогон, а не на каждого подписчика.
 
         `collect_for_role` не зависит от пользователя — персонализация начинается
-        позже, в `_filter_new_for_user`. Поэтому подписчики с одной ролью могут
+        позже, в `db.unsent_to_subscriber`. Поэтому подписчики с одной ролью могут
         делить результат, и повторные обходы источников были чистой потерей.
         """
         cache: dict[str, list[Vacancy]] = {}
@@ -271,16 +274,6 @@ class SubscriberService:
             if is_fresh(vacancy, self.settings.max_vacancy_age_hours)
         ]
 
-    def _filter_new_for_user(self, user_id: int, vacancies: Iterable[Vacancy]) -> list[Vacancy]:
-        new_items: list[Vacancy] = []
-        for vacancy in vacancies:
-            if self.db.is_sent_to_subscriber(user_id, vacancy.uid):
-                continue
-            if self.db.is_sent_to_subscriber_by_dedup(user_id, vacancy.title, vacancy.company):
-                continue
-            new_items.append(vacancy)
-        return new_items
-
     async def _send_to_user(
         self,
         user_id: int,
@@ -290,10 +283,17 @@ class SubscriberService:
         roles_complete: bool = True,
     ) -> tuple[int, bool]:
         """(сколько сообщений ушло, было ли это «новых нет»)."""
-        new_vacancies = self._filter_new_for_user(user_id, fresh_vacancies)
-        all_new = dedupe_by_title_company(new_vacancies)
+        all_new = dedupe_by_title_company(self.db.unsent_to_subscriber(user_id, fresh_vacancies))
         to_post = self._limit_freshest(all_new)
         role_label = format_digest_roles_label(role_ids)
+
+        # Остаток — для кнопки «Показать остальные». Пустой список стирает
+        # прежний, чтобы старая кнопка не отдала то, что уже ушло подборкой.
+        posted = {v.uid for v in to_post}
+        overflow = [v for v in all_new if v.uid not in posted]
+        today = self._today()
+        self.db.replace_digest_overflow(user_id, today, overflow)
+        more = more_keyboard(len(overflow), today) if overflow else None
 
         messages, included = format_subscriber_digest(
             role_label,
@@ -309,8 +309,10 @@ class SubscriberService:
             )
 
         delivered: Optional[Message] = None
-        for message in messages:
-            delivered = await self._safe_send(user_id, message) or delivered
+        for index, message in enumerate(messages):
+            is_last = index == len(messages) - 1
+            markup = more if is_last else None
+            delivered = await self._safe_send(user_id, message, markup) or delivered
             if len(messages) > 1:
                 await asyncio.sleep(0.4)
 
@@ -320,10 +322,11 @@ class SubscriberService:
         self._remember_profile(user_id, delivered)
 
         logger.info(
-            "Подписчик %s roles=%s: отправлено %s вакансий",
+            "Подписчик %s roles=%s: отправлено %s вакансий, по кнопке ещё %s",
             user_id,
             ",".join(role_ids),
             included,
+            len(overflow),
         )
         return len(messages), False
 
@@ -366,7 +369,9 @@ class SubscriberService:
         except Exception:
             logger.exception("Не удалось сохранить профиль подписчика %s", user_id)
 
-    async def _safe_send(self, chat_id: int, text: str) -> Optional[Message]:
+    async def _safe_send(
+        self, chat_id: int, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None
+    ) -> Optional[Message]:
         network_retries = 0
         while True:
             try:
@@ -375,6 +380,7 @@ class SubscriberService:
                     text=text,
                     parse_mode=ParseMode.HTML,
                     disable_web_page_preview=False,
+                    reply_markup=reply_markup,
                 )
             except TelegramRetryAfter as exc:
                 await asyncio.sleep(exc.retry_after + 1)

@@ -34,3 +34,16 @@ def format_success_roles(role_ids: list[str]) -> str:
         role = get_role(role_ids[0])
         return f"новые вакансии {role.label}" if role else "новые вакансии"
     return f"новые вакансии по ролям: {format_subscription_roles(role_ids)}"
+
+
+def plural_ru(n: int, one: str, few: str, many: str) -> str:
+    """1 вакансия, 2 вакансии, 5 вакансий; 11–19 — всегда третья форма."""
+    n = abs(n) % 100
+    if 11 <= n <= 19:
+        return many
+    n %= 10
+    if n == 1:
+        return one
+    if 2 <= n <= 4:
+        return few
+    return many
