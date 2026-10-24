@@ -432,16 +432,39 @@ tail -30 logs/chat-bot.log
 
 ---
 
-## Обновление на сервере
+## Обновление на сервере — автодеплой (с 24.10.2026)
+
+Push в `main` → `.github/workflows/tests.yml` (Python 3.8 в контейнере, как на
+сервере; check run называется `tests`) → CRON на сервере каждые 5 минут
+запускает `deploy/isp/autodeploy.sh`:
+
+- не трогает бота 09:55–10:40 МСК и пока работает процесс python `bot.run_once`
+  (отложенная рассылка `bash -c 'sleep …'` не в счёт — ищем процесс python);
+- новый коммит в `origin/main` → смотрит check run `tests` через публичный API
+  GitHub (без токена); идут — ждёт, упали — пишет админу один раз и коммит
+  больше не пробует (`logs/autodeploy.failed`);
+- `git merge --ff-only`, при изменении `requirements.txt` — `pip install`;
+- смоук: импорт `bot.run_once`, `bot.chat_main` и миграция базы; не прошёл —
+  `git reset --hard` на прошлый коммит и сообщение админу;
+- перезапуск `chat_main`; итог — сообщение админу (`bot/admin_notify.py`).
+
+Watchdog и автодеплой берут общий замок `logs/bot-control.lock` (flock), а бота
+запускают с `9>&-`, иначе он унёс бы замок с собой. Без замка 24.10.2026 два
+скрипта подняли по копии, вторая вышла с ошибкой. На старте бот ждёт связь с
+Телеграмом сам (`_wait_for_telegram`, ~3 минуты): раньше обрыв сети в момент
+getMe ронял его до следующего обхода watchdog.
+
+Проверка скрипта без сервера: `bash scripts/test_autodeploy.sh` — «GitHub» как
+локальный bare-репозиторий, ответы API через `file://`, четыре сценария.
+
+Вручную, если автодеплой отключён:
 
 ```bash
 cd /var/www/u3452280/data/vacancy-bot
 git pull
 .venv/bin/pip install -r requirements.txt   # если менялся requirements.txt
-
-# Перезапуск chat_main после обновления
 pkill -f bot.chat_main || true
-nohup .venv/bin/python -m bot.chat_main >> logs/chat-bot.log 2>&1 &
+rm -f logs/chat-bot.pid && nohup .venv/bin/python -m bot.chat_main >> logs/chat-bot.log 2>&1 &
 ```
 
 ---

@@ -113,11 +113,13 @@ python -m pytest tests/ -q
 ## Деплой
 
 Прод — reg.ru / ISPmanager: **[deploy/isp/README.md](deploy/isp/README.md)** (cron,
-watchdog, обновление кода).
+watchdog, автодеплой).
 
-GitHub Actions (`.github/workflows/daily-vacancies.yml`) оставлен **только на ручной
-запуск** (`workflow_dispatch`): расписание отключено, чтобы у GitHub и сервера не
-разъезжались базы дедупликации.
+Путь изменения: push в `main` → GitHub Actions гоняет тесты на Python 3.8
+(`.github/workflows/tests.yml`) → сервер раз в 5 минут сам забирает коммит с
+зелёными тестами (`deploy/isp/autodeploy.sh`), проверяет запуск, при сбое
+откатывает и пишет админу в Телеграм. Ключей и паролей от сервера в GitHub нет.
+Проверить скрипт автодеплоя без сервера: `bash scripts/test_autodeploy.sh`.
 
 ## Команды чат-бота
 

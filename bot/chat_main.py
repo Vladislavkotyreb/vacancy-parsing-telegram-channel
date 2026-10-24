@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 from aiogram import Bot, Dispatcher, F, Router
+from aiogram.exceptions import TelegramNetworkError
 from aiogram.filters import Command
 from aiogram.types import (
     CallbackQuery,
@@ -69,6 +70,8 @@ S2_BACK = "s2:back"
 ADMIN_USERS_PAGE = "adm:users:"  # adm:users:<page>
 PROFILE_FETCH_CONCURRENCY = 5
 PROFILE_FETCH_TIMEOUT_SEC = 5
+# Паузы между попытками достучаться до Телеграма на старте (~3 минуты в сумме).
+STARTUP_RETRY_DELAYS_SEC = (5, 10, 20, 30, 60, 60)
 
 # Префикс отмеченной роли в клавиатуре — он же признак «роль в черновике».
 MARK = "✓ "
@@ -706,6 +709,29 @@ async def fallback(message: Message, db: VacancyDatabase) -> None:
     )
 
 
+async def _wait_for_telegram(bot: Bot, delays: tuple[float, ...] = STARTUP_RETRY_DELAYS_SEC) -> None:
+    """Ждём связь с Телеграмом, а не падаем на старте.
+
+    Исходящая сеть хостинга рвётся раз в 15–30 минут. start_polling первым делом
+    зовёт getMe, и в такой момент бот выходил с ошибкой — поднимал его только
+    watchdog минут через пять (так было при деплое 24.10.2026). Дальше, во время
+    polling, обрывы aiogram переживает сам.
+    """
+    for attempt, delay in enumerate(delays, start=1):
+        try:
+            await bot.get_me()
+            return
+        except TelegramNetworkError as exc:
+            logger.warning(
+                "Телеграм недоступен на старте (попытка %s), повтор через %s с: %s",
+                attempt,
+                delay,
+                exc,
+            )
+            await asyncio.sleep(delay)
+    await bot.get_me()  # последняя попытка: ошибка уйдёт в лог, дальше — watchdog
+
+
 async def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -725,6 +751,7 @@ async def main() -> None:
 
     logger.info("Чат-бот подписок запущен (polling)")
     try:
+        await _wait_for_telegram(bot)
         await dp.start_polling(bot)
     finally:
         _release_single_instance()

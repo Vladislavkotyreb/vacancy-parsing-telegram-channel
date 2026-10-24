@@ -1,0 +1,25 @@
+# Тесты на каждый push в main и на pull request. Python 3.8 — как на сервере
+# reg.ru; контейнер, а не setup-python: свежие образы GitHub 3.8 уже не держат.
+# По зелёному результату этого job'а (check run «tests») сервер выкатывает
+# коммит сам — см. deploy/isp/autodeploy.sh.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    name: tests
+    runs-on: ubuntu-latest
+    container: python:3.8-slim
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: pip install -q -r requirements.txt pytest
+      - name: Python 3.8 syntax
+        run: python -c "import ast, pathlib; [ast.parse(p.read_text(), feature_version=(3, 8)) for p in pathlib.Path('.').rglob('*.py') if '.venv' not in p.parts]"
+      - name: Run tests
+        run: python -m pytest -q
