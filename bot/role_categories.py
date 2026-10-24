@@ -32,6 +32,16 @@ CATEGORIES: dict[str, RoleCategory] = {
         title="Backend",
         role_ids=("backend_python", "backend_java", "backend_go", "backend_php"),
     ),
+    "fullstack": RoleCategory(
+        id="fullstack",
+        title="Fullstack",
+        role_ids=("fullstack",),
+    ),
+    "mobile": RoleCategory(
+        id="mobile",
+        title="Mobile",
+        role_ids=("mobile_flutter", "mobile_ios", "mobile_android", "mobile_react_native"),
+    ),
     "product": RoleCategory(
         id="product",
         title="Продукт",

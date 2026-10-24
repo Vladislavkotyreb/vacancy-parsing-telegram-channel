@@ -709,3 +709,68 @@ class PhpDeveloperTest(unittest.TestCase):
         self.assertIn("backend_php", get_category("backend").role_ids)
         self.assertEqual(ROLES["backend_php"].button_label, "Backend | PHP")
         self.assertLessEqual(len("s2:role:backend:backend_php".encode()), 64)
+
+
+from bot.role_filters import (  # noqa: E402
+    is_android_developer_vacancy,
+    is_flutter_developer_vacancy,
+    is_fullstack_vacancy,
+    is_ios_developer_vacancy,
+    is_react_native_developer_vacancy,
+)
+
+
+class FullstackAndMobileTest(unittest.TestCase):
+    """Заголовки — из живой выдачи HH, Хабра и GetMatch за 3 дня (24.10.2026)."""
+
+    def check(self, matcher, yes, no):
+        for title in yes:
+            self.assertTrue(matcher(title), title)
+        for title in no:
+            self.assertFalse(matcher(title), title)
+
+    def test_fullstack(self):
+        self.check(is_fullstack_vacancy,
+                   ["Fullstack-разработчик (Node.js/React)", "Senior Full-Stack Developer (Angular / .NET Core)",
+                    "Full-stack разработчик (Go / Next.js)", "Fullstack Team Lead (корпоративные сайты)",
+                    "Разработчик полного цикла / Fullstack-разработчик PHP / Laravel + Vue (Middle+ / Senior)"],
+                   ["Fullstack-аналитик", "Системный аналитик / Fullstack-аналитик", "Fullstack QA Engineer (Java)",
+                    "AQA/Fullstack QA (Ai sales)", "Дизайнер Fullstack", "Младший QA-инженер Fullstack",
+                    "Frontend-разработчик (React)"])
+
+    def test_flutter(self):
+        self.check(is_flutter_developer_vacancy,
+                   ["Flutter-разработчик", "Flutter-разработчик (в офис)", "Mobile Developer (Flutter/Dart)"],
+                   ["Python-developer", "QA Engineer (Flutter)", "Golang-разработчик"])
+
+    def test_ios(self):
+        self.check(is_ios_developer_vacancy,
+                   ["IOS Developer (Middle+)", "Senior+ iOS Developer", "IOS разработчик в WB чат",
+                    "Swift-разработчик", "Разработчик iOS / Проектная работа / АУТСТАФФ"],
+                   ["Менеджер по работе с клиентами (продажа зарубежных банковских карт / сопровождение SWIFT)",
+                    "Тестировщик iOS-приложений", "Сервисный инженер (ремонт iPhone и iOS-устройств)",
+                    "Product Owner (iOS)"])
+
+    def test_android(self):
+        self.check(is_android_developer_vacancy,
+                   ["Android-разработчик (Kotlin, Jetpack Compose)", "Senior Android Developer",
+                    "Разработчик приложений для ОС Андроид", "Kotlin-разработчик (мобильная разработка)"],
+                   ["Backend-разработчик (Java/Kotlin)", "Java / Kotlin разработчик (Software Engineer)",
+                    "Сервисный инженер (Обучение с нуля / Ремонт iPhone и Android)",
+                    "Сборщик заказов / Кладовщик на склад запчастей для Apple и Android",
+                    "Тестировщик мобильных приложений / Mobile App (Android)"])
+
+    def test_react_native_and_web_react_are_split(self):
+        from bot.role_filters import is_react_developer_vacancy
+        self.check(is_react_native_developer_vacancy,
+                   ["React Native разработчик", "Мобильный разработчик (React Native /JavaScript /TypeScript)"],
+                   ["Fullstack-разработчик (Node.js/React) / AI-native", "Frontend-разработчик (React)"])
+        self.assertFalse(is_react_developer_vacancy("React Native разработчик"))
+        self.assertTrue(is_react_developer_vacancy("Фронтенд-разработчик (reactjs, redux toolkit)"))
+
+    def test_menu(self):
+        self.assertEqual(get_category("fullstack").role_ids, ("fullstack",))
+        self.assertEqual(get_category("mobile").role_ids,
+                         ("mobile_flutter", "mobile_ios", "mobile_android", "mobile_react_native"))
+        for role_id in get_category("mobile").role_ids:
+            self.assertLessEqual(len(f"s2:role:mobile:{role_id}".encode()), 64)

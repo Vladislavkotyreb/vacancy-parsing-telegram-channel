@@ -175,10 +175,21 @@ deploy/isp/
 | Дизайн | `product_designer`, `communication_designer`, `graphic_designer`, `art_director` | только `art_director`: 12, 34 |
 | Frontend | `frontend_react`, `frontend_vue`, `frontend_angular` | — |
 | Backend | `backend_python`, `backend_java`, `backend_go`, `backend_php` | — |
+| Fullstack | `fullstack` | — |
+| Mobile | `mobile_flutter`, `mobile_ios`, `mobile_android`, `mobile_react_native` | — |
 | Продукт | `product_manager`, `product_owner` | 73 |
 | QA | `qa_manual`, `qa_automation` | 124 |
 | Data | `data_scientist`, `ml_engineer`, `data_engineer`, `data_analyst`, `product_analyst`, `data_governance` | — |
 | Руководители | `head_of_data`, `head_of_ai`, `head_of_design`, `head_of_product`, `head_of_engineering` | — |
+
+`fullstack` и `mobile_*` (24.10.2026, по просьбе подписчика — Flutter): общий
+`NOT_DEVELOPER_EXCLUDE` отсекает «Fullstack-аналитика», «Fullstack QA», «Дизайнера
+Fullstack» — это треть заголовков со словом fullstack на HH. Запросы «фуллстек» и
+«dart» HH ищет нечётко (приносят Python и 1С) — не добавлять. Swift — только рядом
+с разработкой («сопровождение SWIFT» — банк), Kotlin в Android — только с
+mobile/Jetpack/Compose (иначе это бэкенд). React-роль не берёт React Native.
+Мобильных вакансий мало: за 72 ч по всем площадкам iOS ~7, Android ~8, Flutter ~3,
+React Native ~2. «Мобильный разработчик» без стека в названии не уходит никому.
 
 `hh_professional_roles` нужен там, где по названию не видно отрасли. Для QA
 (`124`) это работает отлично — уходит контроль качества на стройке и на

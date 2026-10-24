@@ -18,7 +18,7 @@ FRONTEND_EXCLUDE = [
     re.compile(r"devops|sre|site reliability", re.I),
     re.compile(r"product\s*manager|продуктов(?:ый|ого)\s*менедж", re.I),
     re.compile(r"дизайн|designer|design\b", re.I),
-    re.compile(r"\bandroid\b|\bios\b|mobile\s*dev", re.I),
+    re.compile(r"\bandroid\b|\bios\b|mobile\s*dev|react[\s-]*native|flutter", re.I),
     re.compile(r"data\s*(?:scientist|analyst)|аналитик\s*данных", re.I),
 ]
 
@@ -147,6 +147,7 @@ def is_react_developer_vacancy(title: str) -> bool:
         re.compile(r"back[\s-]*end|бэкенд", re.I),
         re.compile(r"\bvue\b", re.I),
         re.compile(r"\bangular\b", re.I),
+        re.compile(r"react[\s-]*native", re.I),  # мобильная роль, не веб
     ]
     return _matches(title, include, exclude)
 
@@ -237,6 +238,60 @@ def is_php_developer_vacancy(title: str) -> bool:
     if _belongs_to_data_role(title):
         return False
     return _matches(title, PHP_INCLUDE, PHP_EXCLUDE)
+
+
+# --- Fullstack и мобильная разработка (24.10.2026) ---
+# Общее: не забирать тестировщиков, аналитиков, дизайнеров и менеджеров. На HH
+# «Fullstack-аналитик», «Fullstack QA», «Дизайнер Fullstack» — около трети
+# заголовков со словом fullstack.
+NOT_DEVELOPER_EXCLUDE = [
+    re.compile(r"\bqa\b|\baqa\b|quality assurance|тестиров|тестировщ", re.I),
+    re.compile(r"аналитик|analyst", re.I),
+    re.compile(r"дизайн|designer|design\b", re.I),
+    re.compile(r"product\s*(?:manager|owner)|продуктов\w*\s*менедж|менеджер\s+продукта", re.I),
+    re.compile(r"маркетолог|marketing|\bsmm\b|рекрутер|recruit", re.I),
+]
+_DEV_CONTEXT = r"разработ|программист|developer|engineer|\bdev\b|team\s*lead|tech\s*lead|тимлид|техлид"
+
+
+def is_fullstack_vacancy(title: str) -> bool:
+    include = [re.compile(r"full[\s-]*stack|фул+[\s-]*ст[еэ]к|фулстак|разработчик\w*\s+полного\s+цикла", re.I)]
+    return _matches(title, include, NOT_DEVELOPER_EXCLUDE)
+
+
+# Мобильная разработка. На HH мало: за 3 дня iOS ~4, Android ~5, Flutter ~2,
+# React Native ~2 — плюс Хабр, GetMatch и мир. Стек в названии обязателен:
+# «Мобильный разработчик» без стека никому из ролей не уходит.
+_MOBILE_NOISE = re.compile(r"ремонт|сервисн|склад|кладовщ|сборщик|продаж|sales", re.I)
+MOBILE_EXCLUDE = NOT_DEVELOPER_EXCLUDE + [_MOBILE_NOISE]
+
+
+def is_flutter_developer_vacancy(title: str) -> bool:
+    include = [re.compile(r"flutter|\bdart\b", re.I)]
+    return _matches(title, include, MOBILE_EXCLUDE)
+
+
+def is_ios_developer_vacancy(title: str) -> bool:
+    include = [
+        re.compile(r"\bios\b|swiftui|objective[\s-]*c\b", re.I),
+        # Swift — только рядом с разработкой: «сопровождение SWIFT» — банковские платежи.
+        re.compile(rf"\bswift\b.*(?:{_DEV_CONTEXT})|(?:{_DEV_CONTEXT}).*\bswift\b", re.I),
+    ]
+    return _matches(title, include, MOBILE_EXCLUDE)
+
+
+def is_android_developer_vacancy(title: str) -> bool:
+    include = [
+        re.compile(r"\bandroid\b|андроид", re.I),
+        # Kotlin без признаков мобильной разработки — чаще бэкенд («Java/Kotlin разработчик»).
+        re.compile(r"\bkotlin\b.*(?:mobile|мобильн|jetpack|compose)|(?:mobile|мобильн).*\bkotlin\b", re.I),
+    ]
+    return _matches(title, include, MOBILE_EXCLUDE)
+
+
+def is_react_native_developer_vacancy(title: str) -> bool:
+    include = [re.compile(r"react[\s-]*native", re.I)]
+    return _matches(title, include, MOBILE_EXCLUDE)
 
 
 # --- Продукт и QA ---
