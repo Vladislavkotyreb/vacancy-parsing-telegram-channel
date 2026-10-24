@@ -50,7 +50,7 @@ bot/
 
   service.py            — КАНАЛ: collect → filter → post → save
   subscriber_service.py — ПОДПИСЧИКИ: collect по роли → DM каждому
-  subscriber_collect.py — парсинг HH/careers/GeekJob/GetMatch по роли
+  subscriber_collect.py — сбор по роли: HH по запросам роли + общие ленты GeekJob/GetMatch
   subscriber_formatters.py — HTML для личных дайджестов (без футера канала)
 
   roles.py              — MVP-роли: product_designer, frontend, backend
@@ -107,7 +107,16 @@ deploy/isp/
    все роли подписчика собраны целиком** (`_roles_complete`): при сбое, 403 или
    неизвестной роли молчим — вакансии могли быть, мы их просто не увидели.
    До 24.10.2026 здесь была тишина; пользователь попросил писать, что вакансий нет.
-5. GetMatch только для дизайн-ролей (`uses_getmatch=True` в `roles.py`)
+5. **GeekJob и GetMatch — общие ленты, одна на прогон** (`shared_feeds` в
+   `subscriber_collect.py`): обе площадки маленькие, весь каталог — несколько
+   страниц. GeekJob: `search` игнорирует, `qs` сортирует по релевантности и
+   отдаёт часть каталога со старыми вакансиями сверху — поэтому качаем все 3
+   страницы. GetMatch: `specialization` игнорирует, отдаёт все IT-вакансии —
+   поэтому лента идёт всем ролям, а не только дизайну (до 24.10.2026 был флаг
+   `uses_getmatch`). Сбой любой из двух площадок роль не валит (`_side_source`),
+   таймаут 20 с. Сайт Сбера (`BigTechCareersParser`) подписки не опрашивают:
+   он подгружает вакансии скриптом и всегда находил 0; канал его пока вызывает.
+   Стережёт `tests/test_side_sources.py`
 6. **Не больше 30 вакансий в дайджесте** (`MAX_VACANCIES_PER_DIGEST`): у нового
    подписчика «новые» — все вакансии за 72 ч, у продакт-менеджера это ~240, то
    есть ~20 сообщений подряд. Уходят самые свежие, отмечаются только они; остальные
@@ -128,15 +137,15 @@ deploy/isp/
 Выбор двухшаговый: специальность (`role_categories.py`) → вакансии внутри неё
 (`roles.py`), можно отметить несколько.
 
-| Специальность | id ролей | GetMatch | professional_role HH |
-|---------------|----------|----------|----------------------|
-| Дизайн | `product_designer`, `communication_designer`, `graphic_designer`, `art_director` | да | только `art_director`: 12, 34 |
-| Frontend | `frontend_react`, `frontend_vue`, `frontend_angular` | нет | — |
-| Backend | `backend_python`, `backend_java`, `backend_go`, `backend_php` | нет | — |
-| Продукт | `product_manager`, `product_owner` | нет | 73 |
-| QA | `qa_manual`, `qa_automation` | нет | 124 |
-| Data | `data_scientist`, `ml_engineer`, `data_engineer`, `data_analyst`, `product_analyst`, `data_governance` | нет | — |
-| Руководители | `head_of_data`, `head_of_ai`, `head_of_design`, `head_of_product`, `head_of_engineering` | только `head_of_design` | — |
+| Специальность | id ролей | professional_role HH |
+|---------------|----------|----------------------|
+| Дизайн | `product_designer`, `communication_designer`, `graphic_designer`, `art_director` | только `art_director`: 12, 34 |
+| Frontend | `frontend_react`, `frontend_vue`, `frontend_angular` | — |
+| Backend | `backend_python`, `backend_java`, `backend_go`, `backend_php` | — |
+| Продукт | `product_manager`, `product_owner` | 73 |
+| QA | `qa_manual`, `qa_automation` | 124 |
+| Data | `data_scientist`, `ml_engineer`, `data_engineer`, `data_analyst`, `product_analyst`, `data_governance` | — |
+| Руководители | `head_of_data`, `head_of_ai`, `head_of_design`, `head_of_product`, `head_of_engineering` | — |
 
 `hh_professional_roles` нужен там, где по названию не видно отрасли. Для QA
 (`124`) это работает отлично — уходит контроль качества на стройке и на
@@ -371,7 +380,8 @@ tail -30 logs/chat-bot.log
 - **Канал и подписчики** используют одну SQLite БД, но разные таблицы дедупа.
   WAL включён (`PRAGMA journal_mode=WAL`).
 - **HH даты** приходят в формате `+0300`; `parse_iso_datetime` нормализует его в `+03:00`.
-- **GetMatch** не подходит для dev-ролей (specialization=design).
+- **Дубли между площадками** ловятся по названию + компании: одна вакансия на HH
+  и GetMatch с разным написанием компании может прийти дважды.
 - **Фильтры frontend/backend** — эвристика по title, возможны false positive/negative.
 - **`project_manager` сознательно не добавлен.** Роль была написана и проверена
   на живой выдаче HH — и выброшена: «Руководитель проектов» в РФ доминируют

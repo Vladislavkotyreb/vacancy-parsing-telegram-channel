@@ -23,7 +23,7 @@ from bot.digest_more import more_keyboard
 from bot.models import Vacancy
 from bot.roles import get_role
 from bot.russian import format_digest_roles_label
-from bot.subscriber_collect import SourceLimited, collect_for_role
+from bot.subscriber_collect import SourceLimited, collect_for_role, shared_feeds
 from bot.subscriber_formatters import format_empty_notice, format_subscriber_digest
 
 logger = logging.getLogger(__name__)
@@ -224,28 +224,30 @@ class SubscriberService:
         failed: list[str] = []
         limited: list[str] = []
 
-        for role_id in role_ids:
-            role = get_role(role_id)
-            if not role:
-                logger.warning("Неизвестная роль подписчиков: %s — пропуск", role_id)
-                continue
-            try:
-                vacancies = await collect_for_role(self.settings, role)
-            except SourceLimited as exc:
-                # Отдаём то, что успело собраться, но помечаем роль для админа.
-                logger.warning("Роль %s: %s, собрано %s", role_id, exc, len(exc.vacancies))
-                limited.append(role_id)
-                cache[role_id] = exc.vacancies
-                continue
-            except Exception:
-                # Сбойный источник у одной роли не должен лишать дайджеста всех
-                # остальных подписчиков.
-                logger.exception("Не удалось собрать вакансии для роли %s", role_id)
-                failed.append(role_id)
-                cache[role_id] = []
-                continue
-            cache[role_id] = vacancies
-            logger.info("Роль %s: собрано %s вакансий", role_id, len(vacancies))
+        # GetMatch отдаёт все IT-вакансии одной лентой — качаем её раз на прогон.
+        with shared_feeds():
+            for role_id in role_ids:
+                role = get_role(role_id)
+                if not role:
+                    logger.warning("Неизвестная роль подписчиков: %s — пропуск", role_id)
+                    continue
+                try:
+                    vacancies = await collect_for_role(self.settings, role)
+                except SourceLimited as exc:
+                    # Отдаём то, что успело собраться, но помечаем роль для админа.
+                    logger.warning("Роль %s: %s, собрано %s", role_id, exc, len(exc.vacancies))
+                    limited.append(role_id)
+                    cache[role_id] = exc.vacancies
+                    continue
+                except Exception:
+                    # Сбойный источник у одной роли не должен лишать дайджеста всех
+                    # остальных подписчиков.
+                    logger.exception("Не удалось собрать вакансии для роли %s", role_id)
+                    failed.append(role_id)
+                    cache[role_id] = []
+                    continue
+                cache[role_id] = vacancies
+                logger.info("Роль %s: собрано %s вакансий", role_id, len(vacancies))
 
         logger.info(
             "Сбор завершён: ролей=%s, со сбоем=%s, HH ограничил=%s",

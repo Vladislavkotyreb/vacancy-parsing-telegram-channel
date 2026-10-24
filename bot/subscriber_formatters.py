@@ -9,9 +9,10 @@ from bot.formatters import (
     escape_html,
 )
 
+# Площадки, которые опрашивает сбор подписок. Сайт Сбера («Карьера (бигтех)»)
+# убран: он ничего не находил, вакансии Сбера приходят с HH.
 SOURCE_LABELS = {
     "hh.ru": "HeadHunter",
-    "careers": "Карьера (бигтех)",
     "geekjob.ru": "GeekJob",
     "getmatch.ru": "GetMatch",
 }

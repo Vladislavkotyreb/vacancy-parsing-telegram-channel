@@ -41,8 +41,6 @@ class Role:
     label: str
     button_label: str
     hh_queries: tuple[str, ...]
-    geekjob_queries: tuple[str, ...]
-    uses_getmatch: bool
     matcher: Callable[[str], bool]
     # Профобласти HH (https://api.hh.ru/professional_roles). Пусто — не сужаем.
     # Нужны там, где заголовок не выдаёт отрасль: «тестировщик» и «руководитель
@@ -64,8 +62,6 @@ ROLES: dict[str, Role] = {
             "ux ui designer",
             "UX UI дизайнер",
         ),
-        geekjob_queries=("продуктовый дизайнер", "product designer", "ux designer"),
-        uses_getmatch=True,
         matcher=is_product_designer_vacancy,
     ),
     "communication_designer": Role(
@@ -78,8 +74,6 @@ ROLES: dict[str, Role] = {
             "communication design",
             "visual communication",
         ),
-        geekjob_queries=("коммуникационный дизайнер", "communication designer", "communication design"),
-        uses_getmatch=True,
         matcher=is_communication_designer_vacancy,
     ),
     "graphic_designer": Role(
@@ -92,8 +86,6 @@ ROLES: dict[str, Role] = {
             "graphic design",
             "visual designer",
         ),
-        geekjob_queries=("графический дизайнер", "graphic designer", "дизайнер"),
-        uses_getmatch=True,
         matcher=is_graphic_designer_vacancy,
     ),
     "art_director": Role(
@@ -101,8 +93,6 @@ ROLES: dict[str, Role] = {
         label="арт-директора",
         button_label="Арт-директор",
         hh_queries=("арт-директор", "арт директор", "art director"),
-        geekjob_queries=("арт-директор", "art director"),
-        uses_getmatch=True,
         matcher=is_art_director_vacancy,
         # 12 — «Арт-директор, креативный директор», 34 — «Дизайнер, художник».
         # Одной 12 мало: «Арт-директор/Дизайнер по упаковке» работодатели
@@ -115,8 +105,6 @@ ROLES: dict[str, Role] = {
         label="React-разработчика",
         button_label="Frontend | React",
         hh_queries=("react developer", "react разработчик", "frontend react", "react frontend", "react"),
-        geekjob_queries=("react", "react developer"),
-        uses_getmatch=False,
         matcher=is_react_developer_vacancy,
     ),
     "frontend_vue": Role(
@@ -124,8 +112,6 @@ ROLES: dict[str, Role] = {
         label="Vue-разработчика",
         button_label="Frontend | Vue",
         hh_queries=("vue developer", "vue разработчик", "vue.js developer", "frontend vue", "vue.js"),
-        geekjob_queries=("vue", "vue.js", "vue developer"),
-        uses_getmatch=False,
         matcher=is_vue_developer_vacancy,
     ),
     "frontend_angular": Role(
@@ -133,8 +119,6 @@ ROLES: dict[str, Role] = {
         label="Angular-разработчика",
         button_label="Frontend | Angular",
         hh_queries=("angular developer", "angular разработчик", "frontend angular", "angular"),
-        geekjob_queries=("angular", "angular developer"),
-        uses_getmatch=False,
         matcher=is_angular_developer_vacancy,
     ),
     "backend_python": Role(
@@ -142,8 +126,6 @@ ROLES: dict[str, Role] = {
         label="Python-разработчика",
         button_label="Backend | Python",
         hh_queries=("python developer", "python разработчик", "python backend", "django developer", "python"),
-        geekjob_queries=("python", "python developer", "django"),
-        uses_getmatch=False,
         matcher=is_python_developer_vacancy,
     ),
     "backend_java": Role(
@@ -151,8 +133,6 @@ ROLES: dict[str, Role] = {
         label="Java-разработчика",
         button_label="Backend | Java",
         hh_queries=("java developer", "java разработчик", "java backend", "spring developer", "java"),
-        geekjob_queries=("java", "java developer", "spring"),
-        uses_getmatch=False,
         matcher=is_java_developer_vacancy,
     ),
     "backend_go": Role(
@@ -160,8 +140,6 @@ ROLES: dict[str, Role] = {
         label="Go-разработчика",
         button_label="Backend | Go",
         hh_queries=("go developer", "golang developer", "go разработчик", "golang разработчик", "golang"),
-        geekjob_queries=("golang", "go developer", "go backend"),
-        uses_getmatch=False,
         matcher=is_go_developer_vacancy,
     ),
     "backend_php": Role(
@@ -172,8 +150,6 @@ ROLES: dict[str, Role] = {
         # их отсекает фильтр, зато так находятся «Программист Битрикс 24» и
         # «Разработчик Битрикс», где слова PHP нет. «yii» на HH ищет мусор.
         hh_queries=("php", "php разработчик", "php developer", "laravel", "symfony", "битрикс", "bitrix"),
-        geekjob_queries=("php", "laravel", "symfony", "битрикс"),
-        uses_getmatch=False,
         matcher=is_php_developer_vacancy,
     ),
     "product_manager": Role(
@@ -186,8 +162,6 @@ ROLES: dict[str, Role] = {
             "продуктовый менеджер",
             "менеджер продукта",
         ),
-        geekjob_queries=("product manager", "продакт менеджер", "продуктовый менеджер"),
-        uses_getmatch=False,
         matcher=is_product_manager_vacancy,
         hh_professional_roles=(73,),
     ),
@@ -196,8 +170,6 @@ ROLES: dict[str, Role] = {
         label="владельца продукта",
         button_label="Product Owner",
         hh_queries=("product owner", "продакт оунер", "владелец продукта"),
-        geekjob_queries=("product owner", "владелец продукта"),
-        uses_getmatch=False,
         matcher=is_product_owner_vacancy,
         hh_professional_roles=(73,),
     ),
@@ -211,8 +183,6 @@ ROLES: dict[str, Role] = {
             "инженер по тестированию",
             "ручное тестирование",
         ),
-        geekjob_queries=("qa", "тестировщик", "тестирование"),
-        uses_getmatch=False,
         matcher=is_qa_manual_vacancy,
         hh_professional_roles=(124,),
     ),
@@ -227,8 +197,6 @@ ROLES: dict[str, Role] = {
             "aqa",
             "sdet",
         ),
-        geekjob_queries=("qa automation", "автоматизация тестирования", "aqa"),
-        uses_getmatch=False,
         matcher=is_qa_automation_vacancy,
         hh_professional_roles=(124,),
     ),
@@ -238,8 +206,6 @@ ROLES: dict[str, Role] = {
         label="дата-сайентиста",
         button_label="Data Scientist",
         hh_queries=("data scientist", "дата сайентист", "data science"),
-        geekjob_queries=("data scientist", "data science"),
-        uses_getmatch=False,
         matcher=is_data_scientist_vacancy,
     ),
     "ml_engineer": Role(
@@ -257,8 +223,6 @@ ROLES: dict[str, Role] = {
             "ai engineer",
             "computer vision",
         ),
-        geekjob_queries=("ml engineer", "machine learning", "mlops"),
-        uses_getmatch=False,
         matcher=is_ml_engineer_vacancy,
     ),
     "data_engineer": Role(
@@ -266,8 +230,6 @@ ROLES: dict[str, Role] = {
         label="дата-инженера",
         button_label="Data Engineer",
         hh_queries=("data engineer", "инженер данных", "дата инженер", "dwh", "etl"),
-        geekjob_queries=("data engineer", "dwh", "etl"),
-        uses_getmatch=False,
         matcher=is_data_engineer_vacancy,
     ),
     "data_analyst": Role(
@@ -281,8 +243,6 @@ ROLES: dict[str, Role] = {
             "bi аналитик",
             "bi разработчик",
         ),
-        geekjob_queries=("аналитик данных", "data analyst", "bi"),
-        uses_getmatch=False,
         matcher=is_data_analyst_vacancy,
     ),
     "product_analyst": Role(
@@ -290,8 +250,6 @@ ROLES: dict[str, Role] = {
         label="продуктового аналитика",
         button_label="Продуктовый аналитик",
         hh_queries=("продуктовый аналитик", "product analyst"),
-        geekjob_queries=("продуктовый аналитик", "product analyst"),
-        uses_getmatch=False,
         matcher=is_product_analyst_vacancy,
     ),
     "data_governance": Role(
@@ -306,8 +264,6 @@ ROLES: dict[str, Role] = {
             "data quality",
             "mdm",
         ),
-        geekjob_queries=("data governance", "data quality"),
-        uses_getmatch=False,
         matcher=is_data_governance_vacancy,
     ),
     # Руководители. Вакансий мало — около одной в день на все роли вместе, —
@@ -324,8 +280,6 @@ ROLES: dict[str, Role] = {
             "head of analytics",
             "руководитель аналитики данных",
         ),
-        geekjob_queries=("head of data", "cdo"),
-        uses_getmatch=False,
         matcher=is_head_of_data_vacancy,
     ),
     "head_of_ai": Role(
@@ -340,8 +294,6 @@ ROLES: dict[str, Role] = {
             "руководитель ии",
             "head of ml",
         ),
-        geekjob_queries=("head of ai", "head of ml"),
-        uses_getmatch=False,
         matcher=is_head_of_ai_vacancy,
     ),
     "head_of_design": Role(
@@ -356,8 +308,6 @@ ROLES: dict[str, Role] = {
             "руководитель отдела дизайна",
             "руководитель направления дизайна",
         ),
-        geekjob_queries=("head of design", "design director"),
-        uses_getmatch=True,
         matcher=is_head_of_design_vacancy,
     ),
     "head_of_product": Role(
@@ -365,8 +315,6 @@ ROLES: dict[str, Role] = {
         label="руководителя продукта",
         button_label="Head of Product / CPO",
         hh_queries=("head of product", "cpo", "chief product officer", "директор по продукту", "product director"),
-        geekjob_queries=("head of product", "cpo"),
-        uses_getmatch=False,
         matcher=is_head_of_product_vacancy,
     ),
     "head_of_engineering": Role(
@@ -381,8 +329,6 @@ ROLES: dict[str, Role] = {
             "руководитель разработки",
             "директор по разработке",
         ),
-        geekjob_queries=("cto", "head of engineering", "engineering manager"),
-        uses_getmatch=False,
         matcher=is_head_of_engineering_vacancy,
     ),
     # Legacy — для уже подписанных пользователей, не показываем в меню
@@ -400,8 +346,6 @@ ROLES: dict[str, Role] = {
             "frontend",
             "фронтенд",
         ),
-        geekjob_queries=("frontend", "react", "vue", "angular", "фронтенд"),
-        uses_getmatch=False,
         matcher=is_frontend_vacancy,
     ),
     "backend": Role(
@@ -418,8 +362,6 @@ ROLES: dict[str, Role] = {
             "backend",
             "бэкенд",
         ),
-        geekjob_queries=("backend", "python", "golang", "java", "бэкенд"),
-        uses_getmatch=False,
         matcher=is_backend_vacancy,
     ),
 }

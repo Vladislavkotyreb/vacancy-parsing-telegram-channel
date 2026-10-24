@@ -88,7 +88,6 @@ class CollectForRoleForbiddenTest(unittest.IsolatedAsyncioTestCase):
                            company="А", url="https://hh.ru/vacancy/1",
                            published_at=datetime.now(timezone.utc))]
         with mock.patch("bot.subscriber_collect._fetch_hh", new=AsyncMock(return_value=(partial, True))), \
-             mock.patch("bot.subscriber_collect._fetch_careers", new=AsyncMock(return_value=[])), \
              mock.patch("bot.subscriber_collect._fetch_geekjob", new=AsyncMock(return_value=[])), \
              mock.patch("bot.subscriber_collect._fetch_getmatch", new=AsyncMock(return_value=[])):
             with self.assertRaises(SourceLimited) as ctx:
@@ -97,7 +96,6 @@ class CollectForRoleForbiddenTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_no_403_returns_normally(self):
         with mock.patch("bot.subscriber_collect._fetch_hh", new=AsyncMock(return_value=([], False))), \
-             mock.patch("bot.subscriber_collect._fetch_careers", new=AsyncMock(return_value=[])), \
              mock.patch("bot.subscriber_collect._fetch_geekjob", new=AsyncMock(return_value=[])), \
              mock.patch("bot.subscriber_collect._fetch_getmatch", new=AsyncMock(return_value=[])):
             self.assertEqual(await collect_for_role(_settings(), get_role("product_designer")), [])
