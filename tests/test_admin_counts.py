@@ -50,6 +50,17 @@ class AdminCountsTest(unittest.TestCase):
         # Роль есть только у заблокировавшего бота — её не показываем.
         self.assertNotIn("Backend | Go", self.text)
 
+    def test_legacy_roles_are_marked(self):
+        """Старые frontend/backend не путаются с разделами меню."""
+        path = Path(tempfile.mkdtemp()) / "legacy.db"
+        db = VacancyDatabase(path)
+        db.set_subscriber_roles(20, ["frontend", "frontend_react"])
+        db.set_subscriber_roles(21, ["backend"])
+        text = re.sub(r"<[^>]+>", "", format_admin_stats(db, "Europe/Moscow"))
+        self.assertIn("Frontend (старая роль, весь фронтенд): 1 · 0", text)
+        self.assertIn("Backend (старая роль, весь бэкенд): 1 · 0", text)
+        self.assertIn("Frontend | React: 1 · 0", text)
+
     def test_reach_never_exceeds_subscribers(self):
         self.assertIn("Получили хотя бы 1 вакансию: 2 из 2 (100%)", self.text)
         for pct in re.findall(r"\((\d+)%\)", self.text):

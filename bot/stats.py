@@ -18,7 +18,17 @@ USERS_PAGE_SIZE = 20
 TELEGRAM_MAX_LENGTH = 4096
 
 
+# Роли первой версии бота: в меню их нет, а подписчики на них остались. Без
+# пометки в /stats они путаются с одноимёнными разделами меню.
+LEGACY_ROLE_LABELS = {
+    "frontend": "Frontend (старая роль, весь фронтенд)",
+    "backend": "Backend (старая роль, весь бэкенд)",
+}
+
+
 def _role_label(role_id: str) -> str:
+    if role_id in LEGACY_ROLE_LABELS:
+        return LEGACY_ROLE_LABELS[role_id]
     role = ROLES.get(role_id)
     return role.button_label if role else role_id
 
