@@ -18,7 +18,8 @@ from aiogram.exceptions import TelegramForbiddenError, TelegramNetworkError, Tel
 
 from bot.config import Settings
 from bot.database import VacancyDatabase
-from bot.dates import dedupe_by_title_company, ensure_aware, is_fresh
+from bot.cross_source import dedupe_across_sources
+from bot.dates import ensure_aware, is_fresh
 from bot.digest_more import more_keyboard
 from bot.models import Vacancy
 from bot.roles import get_role
@@ -139,7 +140,7 @@ class SubscriberService:
                 len(fresh),
             )
 
-            all_new = dedupe_by_title_company(self.db.unsent_to_subscriber(user_id, fresh))
+            all_new = dedupe_across_sources(self.db.unsent_to_subscriber(user_id, fresh))
             to_post = self._limit_freshest(all_new)
             complete = self._roles_complete(role_ids, cache, failed, limited)
             if not to_post and complete and self.db.empty_notice_day(user_id) != self._today():
@@ -285,7 +286,7 @@ class SubscriberService:
         roles_complete: bool = True,
     ) -> tuple[int, bool]:
         """(сколько сообщений ушло, было ли это «новых нет»)."""
-        all_new = dedupe_by_title_company(self.db.unsent_to_subscriber(user_id, fresh_vacancies))
+        all_new = dedupe_across_sources(self.db.unsent_to_subscriber(user_id, fresh_vacancies))
         to_post = self._limit_freshest(all_new)
         role_label = format_digest_roles_label(role_ids)
 

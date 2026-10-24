@@ -10,13 +10,19 @@ SOURCE_LABELS = {
     "getmatch.ru": "GetMatch",
 }
 
+# Площадки только подписок: подпись в карточке вакансии. В SOURCE_LABELS их
+# нет — по нему канал перечисляет, что проверил, а Хабр он не опрашивает.
+EXTRA_SOURCE_LABELS = {
+    "career.habr.com": "Хабр Карьера",
+}
+
 TELEGRAM_MAX_LENGTH = 4096
 SEPARATOR = "\n\n" + "—" * 16 + "\n\n"
 CHANNEL_FOOTER = "\n\n" + "—" * 9 + "\n" + '<a href="https://t.me/prdsvac">Product design vacancies daily</a>'
 
 
 def format_vacancy(vacancy: Vacancy) -> str:
-    source = SOURCE_LABELS.get(vacancy.source, vacancy.source)
+    source = SOURCE_LABELS.get(vacancy.source) or EXTRA_SOURCE_LABELS.get(vacancy.source, vacancy.source)
     lines = [
         f"🎨 <b>{escape_html(vacancy.title)}</b>",
     ]

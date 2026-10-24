@@ -34,7 +34,8 @@ class AdminCountsTest(unittest.TestCase):
         for user_id, count in ((10, 5), (11, 4), (12, 3), (13, 2)):
             for i in range(count):
                 conn.execute(
-                    "INSERT INTO subscriber_sent VALUES (?, ?, '', ?)", (user_id, f"v{user_id}-{i}", now)
+                    "INSERT INTO subscriber_sent (user_id, vacancy_uid, dedup_key, sent_at) VALUES (?, ?, '', ?)",
+                    (user_id, f"v{user_id}-{i}", now),
                 )
         conn.commit()
         conn.close()

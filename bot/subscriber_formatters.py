@@ -13,6 +13,7 @@ from bot.formatters import (
 # убран: он ничего не находил, вакансии Сбера приходят с HH.
 SOURCE_LABELS = {
     "hh.ru": "HeadHunter",
+    "career.habr.com": "Хабр Карьера",
     "geekjob.ru": "GeekJob",
     "getmatch.ru": "GetMatch",
 }

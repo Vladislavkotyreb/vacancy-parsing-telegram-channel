@@ -8,8 +8,9 @@ from typing import Awaitable, Callable, Iterator, Optional
 import aiohttp
 
 from bot.config import Settings
-from bot.dates import dedupe_by_title_company
+from bot.cross_source import dedupe_across_sources
 from bot.models import Vacancy
+from bot.parsers import habr_career
 from bot.parsers.geekjob import GeekJobParser
 from bot.parsers.getmatch import GetMatchParser
 from bot.parsers.hh import HHParser
@@ -63,8 +64,10 @@ async def collect_for_role(settings: Settings, role: Role) -> list[Vacancy]:
     # Сайт Сбера (BigTechCareersParser) здесь больше не опрашивается: вакансии
     # он подгружает скриптом, парсер их не видел, а вакансии Сбера и так
     # приходят с HH через поиск по работодателям.
+    hours = settings.max_vacancy_age_hours
     for source, vacancies in [
         ("hh.ru", hh_vacancies),
+        ("career.habr.com", await _shared_feed("career.habr.com", lambda: _fetch_habr(hours))),
         ("geekjob.ru", await _shared_feed("geekjob.ru", _fetch_geekjob)),
         ("getmatch.ru", await _shared_feed("getmatch.ru", _fetch_getmatch)),
     ]:
@@ -79,14 +82,14 @@ async def collect_for_role(settings: Settings, role: Role) -> list[Vacancy]:
         for vacancy in matched:
             results[vacancy.uid] = vacancy
 
-    collected = dedupe_by_title_company(list(results.values()))
+    collected = dedupe_across_sources(list(results.values()))
     if hh_limited:
         raise SourceLimited("hh.ru", collected)
     return collected
 
 
 async def _side_source(name: str, fetch: Awaitable[list[Vacancy]]) -> list[Vacancy]:
-    """Сбой GeekJob или GetMatch не валит роль: подписчик получит хотя бы HH."""
+    """Сбой Хабра, GeekJob или GetMatch не валит роль: подписчик получит хотя бы HH."""
     try:
         return await fetch
     except Exception as exc:
@@ -111,6 +114,10 @@ async def _shared_feed(
     if feeds is not None:
         feeds[name] = vacancies
     return vacancies
+
+
+async def _fetch_habr(max_age_hours: int) -> list[Vacancy]:
+    return await habr_career.fetch_recent(max_age_hours, SIDE_SOURCE_TIMEOUT)
 
 
 async def _fetch_getmatch() -> list[Vacancy]:

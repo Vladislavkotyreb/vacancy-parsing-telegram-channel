@@ -12,6 +12,7 @@ try:
 except ImportError:
     from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
 
+from bot.cross_source import merge_key
 from bot.dates import dedupe_key
 from bot.models import Vacancy
 
@@ -168,6 +169,18 @@ class VacancyDatabase:
             # раза в день, даже если рассылку перезапускают после обрыва сети.
             if "last_empty_notice_on" not in subscriber_columns:
                 conn.execute("ALTER TABLE subscribers ADD COLUMN last_empty_notice_on TEXT")
+
+            sent_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(subscriber_sent)")
+            }
+            # Мягкий ключ (bot/cross_source.py): та же вакансия с другой площадки
+            # под чуть другим названием или компанией не придёт повторно.
+            if "merge_key" not in sent_columns:
+                conn.execute("ALTER TABLE subscriber_sent ADD COLUMN merge_key TEXT")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_subscriber_sent_merge "
+                "ON subscriber_sent (user_id, merge_key)"
+            )
 
             self._migrate_subscriber_roles(conn)
 
@@ -698,25 +711,41 @@ class VacancyDatabase:
             conn.execute(
                 """
                 INSERT OR IGNORE INTO subscriber_sent
-                (user_id, vacancy_uid, dedup_key, sent_at)
-                VALUES (?, ?, ?, ?)
+                (user_id, vacancy_uid, dedup_key, merge_key, sent_at)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
                     user_id,
                     vacancy.uid,
                     dedupe_key(vacancy.title, vacancy.company or ""),
+                    merge_key(vacancy.title, vacancy.company or ""),
                     now,
                 ),
             )
 
     def unsent_to_subscriber(self, user_id: int, vacancies: Iterable[Vacancy]) -> list[Vacancy]:
-        """Те, что подписчику ещё не уходили — ни по id, ни дублем с другого сайта."""
-        return [
-            vacancy
-            for vacancy in vacancies
-            if not self.is_sent_to_subscriber(user_id, vacancy.uid)
-            and not self.is_sent_to_subscriber_by_dedup(user_id, vacancy.title, vacancy.company)
-        ]
+        """Те, что подписчику ещё не уходили — ни по id, ни дублем с другой площадки."""
+        unsent = []
+        with self._connect() as conn:
+            for vacancy in vacancies:
+                company = vacancy.company or ""
+                row = conn.execute(
+                    """
+                    SELECT 1 FROM subscriber_sent
+                    WHERE user_id = ?
+                      AND (vacancy_uid = ? OR dedup_key = ? OR merge_key = ?)
+                    LIMIT 1
+                    """,
+                    (
+                        user_id,
+                        vacancy.uid,
+                        dedupe_key(vacancy.title, company),
+                        merge_key(vacancy.title, company),
+                    ),
+                ).fetchone()
+                if row is None:
+                    unsent.append(vacancy)
+        return unsent
 
     def replace_digest_overflow(self, user_id: int, day: str, vacancies: list[Vacancy]) -> None:
         """Остаток подборки вместо прежнего; пустой список — просто стереть прежний."""

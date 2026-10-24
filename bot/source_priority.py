@@ -4,6 +4,7 @@ from __future__ import annotations
 SOURCE_PRIORITY: dict[str, int] = {
     "hh.ru": 0,
     "careers": 1,
+    "career.habr.com": 1,  # только подписки; у канала таких вакансий нет
     "getmatch.ru": 2,
     "geekjob.ru": 3,
 }

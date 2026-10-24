@@ -97,6 +97,7 @@ class GeekJobFeedTest(unittest.IsolatedAsyncioTestCase):
         _FakeSession.calls = []
         with mock.patch("bot.subscriber_collect.aiohttp.ClientSession", _FakeSession), \
              mock.patch("bot.subscriber_collect._fetch_hh", new=AsyncMock(return_value=([], False))), \
+             mock.patch("bot.subscriber_collect._fetch_habr", new=AsyncMock(return_value=[])), \
              mock.patch("bot.subscriber_collect._fetch_getmatch", new=AsyncMock(return_value=[])), \
              shared_feeds():
             python = await collect_for_role(_settings(), get_role("backend_python"))
@@ -112,13 +113,14 @@ class GetMatchSharedTest(unittest.IsolatedAsyncioTestCase):
         return (
             mock.patch("bot.subscriber_collect._fetch_hh", new=AsyncMock(return_value=([], False))),
             mock.patch("bot.subscriber_collect._fetch_geekjob", new=AsyncMock(return_value=[])),
+            mock.patch("bot.subscriber_collect._fetch_habr", new=AsyncMock(return_value=[])),
             mock.patch("bot.subscriber_collect._fetch_getmatch", new=getmatch),
         )
 
     async def test_fetched_once_per_run_and_filtered_per_role(self):
         getmatch = AsyncMock(return_value=list(GETMATCH_FEED))
-        hh, geek, gm = self.patches(getmatch)
-        with hh, geek, gm, shared_feeds():
+        hh, geek, habr, gm = self.patches(getmatch)
+        with hh, geek, habr, gm, shared_feeds():
             python = await collect_for_role(_settings(), get_role("backend_python"))
             designer = await collect_for_role(_settings(), get_role("product_designer"))
             data = await collect_for_role(_settings(), get_role("data_engineer"))
@@ -130,8 +132,8 @@ class GetMatchSharedTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_no_stale_feed_outside_a_run(self):
         getmatch = AsyncMock(return_value=list(GETMATCH_FEED))
-        hh, geek, gm = self.patches(getmatch)
-        with hh, geek, gm:
+        hh, geek, habr, gm = self.patches(getmatch)
+        with hh, geek, habr, gm:
             await collect_for_role(_settings(), get_role("backend_python"))
             await collect_for_role(_settings(), get_role("backend_python"))
         self.assertEqual(getmatch.await_count, 2)
@@ -144,8 +146,8 @@ class GetMatchSharedTest(unittest.IsolatedAsyncioTestCase):
         service = SubscriberService(_settings(db_path), db, AsyncMock())
 
         getmatch = AsyncMock(return_value=list(GETMATCH_FEED))
-        hh, geek, gm = self.patches(getmatch)
-        with hh, geek, gm:
+        hh, geek, habr, gm = self.patches(getmatch)
+        with hh, geek, habr, gm:
             stats = await service.run_daily_digests()
 
         self.assertEqual(getmatch.await_count, 1)
@@ -161,6 +163,7 @@ class SideSourceFailureTest(unittest.IsolatedAsyncioTestCase):
                  mock.patch("bot.subscriber_collect._fetch_hh",
                             new=AsyncMock(return_value=([hh_vacancy], False))), \
                  mock.patch("bot.subscriber_collect._fetch_geekjob", new=AsyncMock(return_value=[])), \
+                 mock.patch("bot.subscriber_collect._fetch_habr", new=AsyncMock(return_value=[])), \
                  mock.patch("bot.subscriber_collect._fetch_getmatch", new=AsyncMock(return_value=[])), \
                  mock.patch(f"bot.subscriber_collect.{broken}",
                             new=AsyncMock(side_effect=RuntimeError("площадка недоступна"))):
@@ -171,6 +174,7 @@ class SideSourceFailureTest(unittest.IsolatedAsyncioTestCase):
         getmatch = AsyncMock(side_effect=RuntimeError("таймаут"))
         with mock.patch("bot.subscriber_collect._fetch_hh", new=AsyncMock(return_value=([], False))), \
              mock.patch("bot.subscriber_collect._fetch_geekjob", new=AsyncMock(return_value=[])), \
+             mock.patch("bot.subscriber_collect._fetch_habr", new=AsyncMock(return_value=[])), \
              mock.patch("bot.subscriber_collect._fetch_getmatch", new=getmatch), \
              shared_feeds():
             for role_id in ("backend_python", "qa_manual", "data_engineer"):
@@ -184,14 +188,15 @@ class SberCareersRemovedTest(unittest.IsolatedAsyncioTestCase):
         with mock.patch("bot.parsers.bigtech.BigTechCareersParser.fetch_matching", new=careers), \
              mock.patch("bot.subscriber_collect._fetch_hh", new=AsyncMock(return_value=([], False))), \
              mock.patch("bot.subscriber_collect._fetch_geekjob", new=AsyncMock(return_value=[])), \
+             mock.patch("bot.subscriber_collect._fetch_habr", new=AsyncMock(return_value=[])), \
              mock.patch("bot.subscriber_collect._fetch_getmatch", new=AsyncMock(return_value=[])):
             await collect_for_role(_settings(), get_role("product_designer"))
         careers.assert_not_awaited()
 
     def test_digest_header_lists_only_real_sources(self):
         header = format_subscriber_header("продакт-менеджера", 5, 10)
-        self.assertIn("Источники: HeadHunter, GeekJob, GetMatch", header)
-        self.assertNotIn("Карьера", header)
+        self.assertIn("Источники: HeadHunter, Хабр Карьера, GeekJob, GetMatch", header)
+        self.assertNotIn("Карьера (бигтех)", header)
 
 
 if __name__ == "__main__":
