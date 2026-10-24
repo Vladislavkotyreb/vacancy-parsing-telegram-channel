@@ -774,3 +774,57 @@ class FullstackAndMobileTest(unittest.TestCase):
                          ("mobile_flutter", "mobile_ios", "mobile_android", "mobile_react_native"))
         for role_id in get_category("mobile").role_ids:
             self.assertLessEqual(len(f"s2:role:mobile:{role_id}".encode()), 64)
+
+
+# --- C# / .NET (24.10.2026). Заголовки — из живых лент Хабра, GetMatch и GeekJob. ---
+from bot.role_filters import is_csharp_developer_vacancy  # noqa: E402
+
+
+class CSharpDeveloperTest(unittest.TestCase):
+    def test_csharp_titles(self):
+        for title in (
+            "C#/.NET-разработчик",
+            "Middle+ C#/.NET-разработчик",
+            ".NET разработчик (Новосибирск, офис)",
+            "Разработчик .Net / Проектная работа / АУТСТАФФ",
+            "Senior .NET Engineer",
+            "Senior Product Engineer (.NET)",
+            "Team Lead C# (.net)",
+            "Ведущий разработчик C#",
+            "Разработчик C#",
+            "Старший C#-разработчик, ERP и учётные системы",
+            "Ведущий разработчик серверной части (C#) [Секретарь, МТС Веб Сервисы]",
+            "Технический руководитель .NET",
+            "Разработчик .NET (Стажер)",
+            "ASP.NET Core developer",
+            "Dotnet developer",
+        ):
+            self.assertTrue(is_csharp_developer_vacancy(title), title)
+
+    def test_not_csharp_backend(self):
+        for title in (
+            "Fullstack QA Engineer (Manual + Automation C#)",  # QA
+            "QA Fullstack Engineer (C#)",
+            "Инженера по тестированию (фулстек) на Java или C#",
+            "Senior Fullstack Engineer (C# and Angular)",  # уходит в Fullstack
+            "Unity-разработчик (WebGL)",  # геймдев
+            "Unity C# developer",
+            "Game developer C#",
+            "Frontend-разработчик (.NET Blazor)",
+            "Community Manager",  # «maui» внутри слова не должно ловить
+            "Admin of example.net",
+            "Разработчик C++",
+            "Java-разработчик",
+            "1С-разработчик",
+        ):
+            self.assertFalse(is_csharp_developer_vacancy(title), title)
+
+    def test_role_is_in_backend_menu(self):
+        self.assertIn("backend_csharp", get_category("backend").role_ids)
+        self.assertEqual(ROLES["backend_csharp"].button_label, "Backend | C# / .NET")
+        self.assertLessEqual(len("s2:role:backend:backend_csharp".encode()), 64)
+
+    def test_other_backend_roles_do_not_take_csharp(self):
+        for title in ("C#/.NET-разработчик", "Senior .NET Engineer", "Разработчик C#"):
+            for role_id in ("backend_python", "backend_java", "backend_go", "backend_php"):
+                self.assertFalse(ROLES[role_id].matcher(title), (role_id, title))

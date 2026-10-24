@@ -23,6 +23,7 @@ from bot.role_filters import (
     is_head_of_product_vacancy,
     is_java_developer_vacancy,
     is_php_developer_vacancy,
+    is_csharp_developer_vacancy,
     is_fullstack_vacancy,
     is_flutter_developer_vacancy,
     is_ios_developer_vacancy,
@@ -156,6 +157,13 @@ ROLES: dict[str, Role] = {
         # «Разработчик Битрикс», где слова PHP нет. «yii» на HH ищет мусор.
         hh_queries=("php", "php разработчик", "php developer", "laravel", "symfony", "битрикс", "bitrix"),
         matcher=is_php_developer_vacancy,
+    ),
+    "backend_csharp": Role(
+        id="backend_csharp",
+        label="C#/.NET-разработчика",
+        button_label="Backend | C# / .NET",
+        hh_queries=("c#", ".net", "asp.net"),
+        matcher=is_csharp_developer_vacancy,
     ),
     "fullstack": Role(
         id="fullstack",

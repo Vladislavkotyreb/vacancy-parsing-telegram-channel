@@ -240,6 +240,25 @@ def is_php_developer_vacancy(title: str) -> bool:
     return _matches(title, PHP_INCLUDE, PHP_EXCLUDE)
 
 
+# C# / .NET. «.NET» — только отдельным словом: не «example.net» и не «ASP.NET»
+# внутри другого слова (ASP.NET ловится отдельно). Unity и геймдев — это C#, но
+# другой рынок: подписчику бэкенда такие вакансии не нужны.
+CSHARP_INCLUDE = [
+    re.compile(r"(?<!\w)c\s*#|c[\s-]*sharp|csharp", re.I),
+    re.compile(r"(?<!\w)\.net\b|dotnet|asp\.?\s*net|blazor", re.I),
+]
+CSHARP_EXCLUDE = DEV_STACK_EXCLUDE + [
+    re.compile(r"front[\s-]*end|фронт[\s-]*енд", re.I),
+    re.compile(r"\bunity\b|game|гейм|\bигр", re.I),
+]
+
+
+def is_csharp_developer_vacancy(title: str) -> bool:
+    if _belongs_to_data_role(title):
+        return False
+    return _matches(title, CSHARP_INCLUDE, CSHARP_EXCLUDE)
+
+
 # --- Fullstack и мобильная разработка (24.10.2026) ---
 # Общее: не забирать тестировщиков, аналитиков, дизайнеров и менеджеров. На HH
 # «Fullstack-аналитик», «Fullstack QA», «Дизайнер Fullstack» — около трети
