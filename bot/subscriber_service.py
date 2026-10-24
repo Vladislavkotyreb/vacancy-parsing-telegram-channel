@@ -20,6 +20,7 @@ from bot.config import Settings
 from bot.database import VacancyDatabase
 from bot.cross_source import dedupe_across_sources
 from bot.dates import ensure_aware, is_fresh
+from bot.regions import for_region
 from bot.digest_more import more_keyboard
 from bot.models import Vacancy
 from bot.roles import get_role
@@ -81,11 +82,13 @@ class SubscriberService:
                 continue
 
             try:
-                vacancies, fresh = self._merge_for_roles(cache, role_ids)
+                region = self.db.get_region(user_id)
+                vacancies, fresh = self._merge_for_roles(cache, role_ids, region)
                 logger.info(
-                    "Подписчик %s roles=%s: найдено=%s, свежих=%s",
+                    "Подписчик %s roles=%s region=%s: найдено=%s, свежих=%s",
                     user_id,
                     ",".join(role_ids),
+                    region,
                     len(vacancies),
                     len(fresh),
                 )
@@ -97,6 +100,7 @@ class SubscriberService:
                     roles_complete=self._roles_complete(
                         role_ids, cache, failed_roles, limited_roles
                     ),
+                    region=region,
                 )
                 stats.messages += sent
                 stats.empty_notices += int(empty_notice)
@@ -129,12 +133,14 @@ class SubscriberService:
                 logger.info("PREVIEW user=%s: роли не заданы", user_id)
                 continue
 
-            vacancies, fresh = self._merge_for_roles(cache, role_ids)
+            region = self.db.get_region(user_id)
+            vacancies, fresh = self._merge_for_roles(cache, role_ids, region)
             label = format_digest_roles_label(role_ids)
             logger.info(
-                "PREVIEW user=%s roles=%s %s: собрано=%s, свежих=%s",
+                "PREVIEW user=%s roles=%s region=%s %s: собрано=%s, свежих=%s",
                 user_id,
                 ",".join(role_ids),
+                region,
                 label,
                 len(vacancies),
                 len(fresh),
@@ -259,11 +265,12 @@ class SubscriberService:
         return cache, failed, limited
 
     def _merge_for_roles(
-        self, cache: dict[str, list[Vacancy]], role_ids: list[str]
+        self, cache: dict[str, list[Vacancy]], role_ids: list[str], region: str = "cis"
     ) -> tuple[list[Vacancy], list[Vacancy]]:
+        """Вакансии ролей подписчика с площадок его региона (СНГ / мир / оба)."""
         merged: dict[str, Vacancy] = {}
         for role_id in role_ids:
-            for vacancy in cache.get(role_id, []):
+            for vacancy in for_region(cache.get(role_id, []), region):
                 merged[vacancy.uid] = vacancy
 
         vacancies = list(merged.values())
@@ -284,6 +291,7 @@ class SubscriberService:
         fresh_vacancies: list[Vacancy],
         total_found: int,
         roles_complete: bool = True,
+        region: str = "cis",
     ) -> tuple[int, bool]:
         """(сколько сообщений ушло, было ли это «новых нет»)."""
         all_new = dedupe_across_sources(self.db.unsent_to_subscriber(user_id, fresh_vacancies))
@@ -304,6 +312,7 @@ class SubscriberService:
             total_found,
             self.settings.max_vacancy_age_hours,
             total_new=len(all_new),
+            region=region,
         )
 
         if included == 0:

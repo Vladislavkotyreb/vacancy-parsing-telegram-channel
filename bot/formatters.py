@@ -14,6 +14,9 @@ SOURCE_LABELS = {
 # нет — по нему канал перечисляет, что проверил, а Хабр он не опрашивает.
 EXTRA_SOURCE_LABELS = {
     "career.habr.com": "Хабр Карьера",
+    "himalayas.app": "Himalayas",
+    "weworkremotely.com": "We Work Remotely",
+    "jobicy.com": "Jobicy",
 }
 
 TELEGRAM_MAX_LENGTH = 4096

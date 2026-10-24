@@ -15,6 +15,7 @@ except ImportError:
 from bot.cross_source import merge_key
 from bot.dates import dedupe_key
 from bot.models import Vacancy
+from bot.regions import DEFAULT_REGION, normalize_region
 
 
 class VacancyDatabase:
@@ -146,6 +147,14 @@ class VacancyDatabase:
                 -- «Показать остальные». Пишет рассылка (cron), читает чат-бот —
                 -- это разные процессы, поэтому через базу. На человека хранится
                 -- только последняя подборка; digest_day — её дата по TIMEZONE.
+                -- Где искать: cis / world / both (bot/regions.py). Отдельно от ролей:
+                -- регион выбирают первым шагом /start, ещё до подписки.
+                CREATE TABLE IF NOT EXISTS user_region (
+                    user_id INTEGER PRIMARY KEY,
+                    region TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS digest_overflow (
                     user_id INTEGER NOT NULL,
                     digest_day TEXT NOT NULL,
@@ -746,6 +755,25 @@ class VacancyDatabase:
                 if row is None:
                     unsent.append(vacancy)
         return unsent
+
+    def get_region(self, user_id: int) -> str:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT region FROM user_region WHERE user_id = ?", (user_id,)
+            ).fetchone()
+        return normalize_region(row["region"]) if row else DEFAULT_REGION
+
+    def set_region(self, user_id: int, region: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO user_region (user_id, region, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET region = excluded.region,
+                                                   updated_at = excluded.updated_at
+                """,
+                (user_id, normalize_region(region), now),
+            )
 
     def replace_digest_overflow(self, user_id: int, day: str, vacancies: list[Vacancy]) -> None:
         """Остаток подборки вместо прежнего; пустой список — просто стереть прежний."""

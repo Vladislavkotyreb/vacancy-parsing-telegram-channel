@@ -92,7 +92,9 @@ async def fetch_recent(max_age_hours: int, timeout: aiohttp.ClientTimeout) -> li
                 if vacancy.published_at:
                     page_dates.append(ensure_aware(vacancy.published_at))
 
-            if page_dates and min(page_dates) < cutoff:
+            # Стоп, когда свежих на странице не осталось. Не «хоть одна старая»:
+            # закреплённое старое объявление на первой странице оборвало бы сбор.
+            if page_dates and max(page_dates) < cutoff:
                 break
             await asyncio.sleep(PAGE_PAUSE_SEC)
 

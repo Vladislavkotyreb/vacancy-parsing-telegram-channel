@@ -269,7 +269,12 @@ QA_AUTOMATION_TERMS = [
     re.compile(r"тестировщик[\s-]*автоматизатор", re.I),
     re.compile(r"автоматизац\w*\s+тестир|автоматизиров\w*\s+тестир", re.I),
     re.compile(r"(?:test|qa)\s*automation|automation\s*(?:qa|test)", re.I),
-    re.compile(r"\bautomation\b", re.I),
+    # «Automation» само по себе — только рядом с QA/тестами или как Automation
+    # Engineer: на Хабре, GetMatch и западных площадках нет профобласти HH, и
+    # туда попадали «Marketing Automation», «Messaging Automation» у продаж.
+    re.compile(r"\b(?:qa|test\w*|sdet)\b.*\bautomation\b|\bautomation\b.*\b(?:qa|test\w*)\b", re.I),
+    # «Automation Engineer» в начале названия; «Workflow/AI Automation Engineer» — не QA.
+    re.compile(r"^(?:(?:senior|middle|junior|lead|sr\.?)\s+)?automation\s+(?:engineer|developer)\b", re.I),
 ]
 
 

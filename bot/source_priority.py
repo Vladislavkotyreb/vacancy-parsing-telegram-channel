@@ -7,6 +7,10 @@ SOURCE_PRIORITY: dict[str, int] = {
     "career.habr.com": 1,  # только подписки; у канала таких вакансий нет
     "getmatch.ru": 2,
     "geekjob.ru": 3,
+    # Удалёнка по миру — только подписки.
+    "himalayas.app": 4,
+    "weworkremotely.com": 4,
+    "jobicy.com": 4,
 }
 
 

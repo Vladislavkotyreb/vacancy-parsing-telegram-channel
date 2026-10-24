@@ -10,7 +10,7 @@ import aiohttp
 from bot.config import Settings
 from bot.cross_source import dedupe_across_sources
 from bot.models import Vacancy
-from bot.parsers import habr_career
+from bot.parsers import habr_career, world_remote
 from bot.parsers.geekjob import GeekJobParser
 from bot.parsers.getmatch import GetMatchParser
 from bot.parsers.hh import HHParser
@@ -70,6 +70,11 @@ async def collect_for_role(settings: Settings, role: Role) -> list[Vacancy]:
         ("career.habr.com", await _shared_feed("career.habr.com", lambda: _fetch_habr(hours))),
         ("geekjob.ru", await _shared_feed("geekjob.ru", _fetch_geekjob)),
         ("getmatch.ru", await _shared_feed("getmatch.ru", _fetch_getmatch)),
+        # Удалёнка по миру: собирается для всех, а кому она идёт, решает регион
+        # подписчика (bot/regions.py) уже при раздаче.
+        (world_remote.HIMALAYAS, await _shared_feed(world_remote.HIMALAYAS, lambda: _fetch_himalayas(hours))),
+        (world_remote.WWR, await _shared_feed(world_remote.WWR, _fetch_wwr)),
+        (world_remote.JOBICY, await _shared_feed(world_remote.JOBICY, _fetch_jobicy)),
     ]:
         matched = [vacancy for vacancy in vacancies if role.matcher(vacancy.title)]
         logger.info(
@@ -89,7 +94,7 @@ async def collect_for_role(settings: Settings, role: Role) -> list[Vacancy]:
 
 
 async def _side_source(name: str, fetch: Awaitable[list[Vacancy]]) -> list[Vacancy]:
-    """Сбой Хабра, GeekJob или GetMatch не валит роль: подписчик получит хотя бы HH."""
+    """Сбой дополнительной площадки не валит роль: подписчик получит хотя бы HH."""
     try:
         return await fetch
     except Exception as exc:
@@ -118,6 +123,18 @@ async def _shared_feed(
 
 async def _fetch_habr(max_age_hours: int) -> list[Vacancy]:
     return await habr_career.fetch_recent(max_age_hours, SIDE_SOURCE_TIMEOUT)
+
+
+async def _fetch_himalayas(max_age_hours: int) -> list[Vacancy]:
+    return await world_remote.fetch_himalayas(max_age_hours, SIDE_SOURCE_TIMEOUT)
+
+
+async def _fetch_wwr() -> list[Vacancy]:
+    return await world_remote.fetch_wwr(SIDE_SOURCE_TIMEOUT)
+
+
+async def _fetch_jobicy() -> list[Vacancy]:
+    return await world_remote.fetch_jobicy(SIDE_SOURCE_TIMEOUT)
 
 
 async def _fetch_getmatch() -> list[Vacancy]:

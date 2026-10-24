@@ -110,7 +110,7 @@ class FlowSimulationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_pick_specialty_opens_step2(self):
         await s1_pick_specialty(self._cb(f"{S1_CAT}frontend"), self.db)
-        self.assertIn("Шаг 2 из 2", self.edited_texts[-1])
+        self.assertIn("Шаг 3 из 3", self.edited_texts[-1])
         self.assertIn(f"{S2_SAVE}frontend", _callback_data(self.edited_keyboards[-1]))
 
     async def test_toggle_marks_role(self):
@@ -161,7 +161,7 @@ class FlowSimulationTest(unittest.IsolatedAsyncioTestCase):
         )
 
         await s2_back(self._cb(S2_BACK))
-        self.assertIn("Шаг 1 из 2", self.edited_texts[-1])
+        self.assertIn("Шаг 2 из 3", self.edited_texts[-1])
 
         await s1_pick_specialty(self._cb(f"{S1_CAT}design"), self.db)
         self.assertEqual(_draft_from_keyboard(self.message.reply_markup), {"product_designer"})
@@ -175,14 +175,14 @@ class FlowSimulationTest(unittest.IsolatedAsyncioTestCase):
         await s2_save(self._cb(f"{S2_SAVE}frontend"), self.db)
 
         self.assertEqual(self.db.get_subscriber_roles(self.user_id), ["product_designer"])
-        self.assertIn("Шаг 1 из 2", self.edited_texts[-1])
+        self.assertIn("Шаг 2 из 3", self.edited_texts[-1])
 
     async def test_empty_continue_without_saved_deactivates(self):
         await s1_pick_specialty(self._cb(f"{S1_CAT}design"), self.db)
         await s2_save(self._cb(f"{S2_SAVE}design"), self.db)
 
         self.assertEqual(self.db.get_subscriber_roles(self.user_id), [])
-        self.assertIn("Шаг 1 из 2", self.edited_texts[-1])
+        self.assertIn("Шаг 2 из 3", self.edited_texts[-1])
 
     async def test_keyboard_still_works_after_restart(self):
         """Главное: рестарт процесса не должен ломать уже показанную клавиатуру."""

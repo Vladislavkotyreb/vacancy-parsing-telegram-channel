@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from bot.models import Vacancy
+from bot.regions import CIS, DEFAULT_REGION, WORLD, normalize_region
 from bot.roles import get_role
 from bot.formatters import (
     build_paginated_digest,
@@ -17,6 +18,19 @@ SOURCE_LABELS = {
     "geekjob.ru": "GeekJob",
     "getmatch.ru": "GetMatch",
 }
+WORLD_SOURCE_LABELS = {
+    "himalayas.app": "Himalayas",
+    "weworkremotely.com": "We Work Remotely",
+    "jobicy.com": "Jobicy",
+}
+
+
+def _sources_line(region: str) -> str:
+    labels = {
+        CIS: SOURCE_LABELS,
+        WORLD: WORLD_SOURCE_LABELS,
+    }.get(normalize_region(region), {**SOURCE_LABELS, **WORLD_SOURCE_LABELS})
+    return f"Источники: {', '.join(labels.values())}"
 
 
 def format_subscriber_header(
@@ -25,11 +39,12 @@ def format_subscriber_header(
     total_found: int,
     max_age_hours: int = 72,
     total_new: Optional[int] = None,
+    region: str = DEFAULT_REGION,
 ) -> str:
     header = (
         f"✨ <b>{new_count} новых вакансий</b> {escape_html(role_label)} "
         f"(за последние {max_age_hours} ч)\n"
-        f"Источники: {', '.join(SOURCE_LABELS.values())}"
+        f"{_sources_line(region)}"
     )
     if total_new is not None and total_new > new_count:
         # Остальные придут в следующие дни, если не устареют, — но это не
@@ -44,13 +59,14 @@ def format_subscriber_digest(
     total_found: int,
     max_age_hours: int = 72,
     total_new: Optional[int] = None,
+    region: str = DEFAULT_REGION,
 ) -> tuple[list[str], int]:
     if not new_vacancies:
         return [], 0
 
     return build_paginated_digest(
         format_subscriber_header(
-            role_label, len(new_vacancies), total_found, max_age_hours, total_new
+            role_label, len(new_vacancies), total_found, max_age_hours, total_new, region
         ),
         new_vacancies,
         channel_footer=False,

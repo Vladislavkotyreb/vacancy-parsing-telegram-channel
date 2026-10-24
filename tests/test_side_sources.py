@@ -96,6 +96,9 @@ class GeekJobFeedTest(unittest.IsolatedAsyncioTestCase):
     async def test_feed_downloaded_once_per_run_and_filtered_per_role(self):
         _FakeSession.calls = []
         with mock.patch("bot.subscriber_collect.aiohttp.ClientSession", _FakeSession), \
+             mock.patch("bot.subscriber_collect._fetch_himalayas", new=AsyncMock(return_value=[])), \
+             mock.patch("bot.subscriber_collect._fetch_wwr", new=AsyncMock(return_value=[])), \
+             mock.patch("bot.subscriber_collect._fetch_jobicy", new=AsyncMock(return_value=[])), \
              mock.patch("bot.subscriber_collect._fetch_hh", new=AsyncMock(return_value=([], False))), \
              mock.patch("bot.subscriber_collect._fetch_habr", new=AsyncMock(return_value=[])), \
              mock.patch("bot.subscriber_collect._fetch_getmatch", new=AsyncMock(return_value=[])), \

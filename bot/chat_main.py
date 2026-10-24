@@ -42,6 +42,7 @@ from bot.digest_more import (
     user_lock,
 )
 from bot.role_categories import CATEGORIES, CATEGORY_IDS, get_category
+from bot.regions import REGION_BUTTONS, normalize_region, region_phrase
 from bot.roles import ROLES
 from bot.russian import format_subscription_roles, format_success_roles
 from bot.stats import (
@@ -60,6 +61,7 @@ BTN_UNSUBSCRIBE = "Прекратить рассылку"
 BTN_CHOOSE_ROLES = "Выбрать роли"
 BTN_CHOOSE_ROLES_AGAIN = "Выбрать роли заново"
 
+S0_REGION = "s0:reg:"  # s0:reg:<cis|world|both>
 S1_CAT = "s1:cat:"
 S2_ROLE = "s2:role:"  # s2:role:<category_id>:<role_id>
 S2_SAVE = "s2:save:"  # s2:save:<category_id>
@@ -203,6 +205,29 @@ def main_menu_keyboard(subscribed: bool = False) -> ReplyKeyboardMarkup:
     )
 
 
+def region_keyboard(current: str) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"{MARK if region == current else ''}{label}",
+                callback_data=f"{S0_REGION}{region}",
+            )
+        ]
+        for region, label in REGION_BUTTONS.items()
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _region_step_text() -> str:
+    return "\n".join(
+        [
+            "<b>Шаг 1 из 3</b> — где искать",
+            "«СНГ» — HeadHunter, Хабр Карьера, GeekJob, GetMatch",
+            "«Удалёнка по миру» — вакансии на английском, открытые для любой страны",
+        ]
+    )
+
+
 def specialty_keyboard() -> InlineKeyboardMarkup:
     rows = [
         [
@@ -248,7 +273,7 @@ def vacancy_keyboard(category_id: str, draft: set[str]) -> InlineKeyboardMarkup:
 def _specialty_step_text() -> str:
     return "\n".join(
         [
-            "<b>Шаг 1 из 2</b> — специальность",
+            "<b>Шаг 2 из 3</b> — специальность",
             "Нажми на направление:",
         ]
     )
@@ -265,7 +290,7 @@ def _vacancy_step_text(category_id: str, draft: set[str], saved_roles: list[str]
         picked = "Сейчас отмечено: <i>ничего</i>"
 
     lines = [
-        f"<b>Шаг 2 из 2</b> — вакансии ({title})",
+        f"<b>Шаг 3 из 3</b> — вакансии ({title})",
         picked,
     ]
     if category_saved:
@@ -277,7 +302,7 @@ def _vacancy_step_text(category_id: str, draft: set[str], saved_roles: list[str]
         [
             "",
             "Отметь вакансии и нажми «Продолжить».",
-            "Пустой выбор + «Продолжить» — убрать направление и вернуться на шаг 1.",
+            "Пустой выбор + «Продолжить» — убрать направление и вернуться к специальностям.",
             "«Назад» — отменить без сохранения.",
         ]
     )
@@ -308,18 +333,18 @@ async def _show_vacancy_step(
 async def send_welcome(message: Message, subscribed: bool = False) -> None:
     await message.answer(
         "Привет! Каждый день в <b>10:00 (МСК)</b> присылаю новые вакансии в личку.\n\n"
-        "Сначала специальность, потом вакансии — можно несколько.\n"
-        "Источники: HeadHunter, GeekJob, GetMatch (для дизайнеров).",
+        "Сначала выбери, где искать, потом специальность и вакансии — можно несколько.",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(subscribed),
     )
 
 
-async def start_flow(message: Message) -> None:
+async def start_flow(message: Message, db: VacancyDatabase) -> None:
+    current = db.get_region(message.from_user.id) if message.from_user else ""
     await message.answer(
-        _specialty_step_text(),
+        _region_step_text(),
         parse_mode="HTML",
-        reply_markup=specialty_keyboard(),
+        reply_markup=region_keyboard(current),
     )
 
 
@@ -336,8 +361,10 @@ async def send_subscription_info(message: Message, db: VacancyDatabase) -> None:
         return
 
     roles_text = format_subscription_roles(subscriber["roles"])
+    region = REGION_BUTTONS[db.get_region(message.from_user.id)]
     await message.answer(
         f"Текущая подписка: <b>{roles_text}</b>\n"
+        f"Где ищу: <b>{region}</b>\n"
         f"Изменить — «{BTN_CHOOSE_ROLES_AGAIN}»\n"
         "Отписаться — «Прекратить рассылку»",
         parse_mode="HTML",
@@ -368,12 +395,12 @@ async def unsubscribe_user(message: Message, db: VacancyDatabase) -> None:
 async def cmd_start(message: Message, db: VacancyDatabase) -> None:
     subscribed = _is_subscribed(message.from_user.id, db) if message.from_user else False
     await send_welcome(message, subscribed)
-    await start_flow(message)
+    await start_flow(message, db)
 
 
 @router.message(F.text.in_({BTN_CHOOSE_ROLES, BTN_CHOOSE_ROLES_AGAIN}))
-async def btn_choose_roles(message: Message) -> None:
-    await start_flow(message)
+async def btn_choose_roles(message: Message, db: VacancyDatabase) -> None:
+    await start_flow(message, db)
 
 
 @router.message(F.text == BTN_MY_SUBSCRIPTION)
@@ -411,6 +438,18 @@ async def cmd_stats(message: Message, db: VacancyDatabase, settings: Settings) -
 
 
 # --- Шаг 1: специальность (тап → сразу шаг 2) ---
+
+# --- Шаг 1: где искать ---
+@router.callback_query(F.data.startswith(S0_REGION))
+async def s0_pick_region(callback: CallbackQuery, db: VacancyDatabase) -> None:
+    """Регион сохраняется сразу: он общий для всех ролей и нужен даже без подписки."""
+    if not callback.data or not callback.from_user or not callback.message:
+        return
+    region = normalize_region(callback.data[len(S0_REGION):])
+    db.set_region(callback.from_user.id, region)
+    await callback.answer(f"Ищу: {REGION_BUTTONS[region]}")
+    await _show_specialty_step(callback.message)
+
 
 @router.callback_query(F.data.startswith(S1_CAT))
 async def s1_pick_specialty(callback: CallbackQuery, db: VacancyDatabase) -> None:
@@ -502,9 +541,10 @@ async def s2_save(callback: CallbackQuery, db: VacancyDatabase) -> None:
 
     all_roles = db.get_subscriber_roles(callback.from_user.id)
     roles_text = format_success_roles(all_roles)
+    region = region_phrase(db.get_region(callback.from_user.id))
     await callback.message.edit_text(
         f"✅ Готово! Каждый день в <b>10:00 (МСК)</b> буду присылать "
-        f"<b>{roles_text}</b>.\n\n"
+        f"<b>{roles_text}</b> {region}.\n\n"
         "Чтобы изменить другое направление — «Выбрать роли заново».",
         parse_mode="HTML",
     )
