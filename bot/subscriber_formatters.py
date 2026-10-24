@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from bot.models import Vacancy
 from bot.roles import get_role
 from bot.formatters import (
@@ -16,13 +18,22 @@ SOURCE_LABELS = {
 
 
 def format_subscriber_header(
-    role_label: str, new_count: int, total_found: int, max_age_hours: int = 72
+    role_label: str,
+    new_count: int,
+    total_found: int,
+    max_age_hours: int = 72,
+    total_new: Optional[int] = None,
 ) -> str:
-    return (
+    header = (
         f"✨ <b>{new_count} новых вакансий</b> {escape_html(role_label)} "
         f"(за последние {max_age_hours} ч)\n"
         f"Источники: {', '.join(SOURCE_LABELS.values())}"
     )
+    if total_new is not None and total_new > new_count:
+        # Остальные придут в следующие дни, если не устареют, — но это не
+        # гарантировано, поэтому ничего не обещаем, только называем число.
+        header += f"\nПоказаны {new_count} самых свежих из {total_new}"
+    return header
 
 
 def format_subscriber_digest(
@@ -30,12 +41,15 @@ def format_subscriber_digest(
     new_vacancies: list[Vacancy],
     total_found: int,
     max_age_hours: int = 72,
+    total_new: Optional[int] = None,
 ) -> tuple[list[str], int]:
     if not new_vacancies:
         return [], 0
 
     return build_paginated_digest(
-        format_subscriber_header(role_label, len(new_vacancies), total_found, max_age_hours),
+        format_subscriber_header(
+            role_label, len(new_vacancies), total_found, max_age_hours, total_new
+        ),
         new_vacancies,
         channel_footer=False,
     )

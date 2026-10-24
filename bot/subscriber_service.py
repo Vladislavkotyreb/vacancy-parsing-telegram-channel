@@ -18,7 +18,7 @@ from aiogram.exceptions import TelegramForbiddenError, TelegramNetworkError, Tel
 
 from bot.config import Settings
 from bot.database import VacancyDatabase
-from bot.dates import dedupe_by_title_company, is_fresh
+from bot.dates import dedupe_by_title_company, ensure_aware, is_fresh
 from bot.models import Vacancy
 from bot.roles import get_role
 from bot.russian import format_digest_roles_label
@@ -26,6 +26,12 @@ from bot.subscriber_collect import SourceLimited, collect_for_role
 from bot.subscriber_formatters import format_empty_notice, format_subscriber_digest
 
 logger = logging.getLogger(__name__)
+
+# Больше — не в один день. У нового подписчика «новые» — все вакансии за 72 ч:
+# у продакт-менеджера их ~240, это ~20 сообщений подряд и повод отписаться.
+# Отправляем самые свежие, остальные остаются неотмеченными и приходят в
+# следующие дни, пока не устареют.
+MAX_VACANCIES_PER_DIGEST = 30
 
 
 @dataclass
@@ -133,7 +139,8 @@ class SubscriberService:
             )
 
             new_vacancies = self._filter_new_for_user(user_id, fresh)
-            to_post = dedupe_by_title_company(new_vacancies)
+            all_new = dedupe_by_title_company(new_vacancies)
+            to_post = self._limit_freshest(all_new)
             complete = self._roles_complete(role_ids, cache, failed, limited)
             if not to_post and complete and self.db.empty_notice_day(user_id) != self._today():
                 logger.info("PREVIEW user=%s: новых вакансий нет — уйдёт «новых нет»", user_id)
@@ -147,12 +154,26 @@ class SubscriberService:
                 titles = "; ".join(v.title[:50] for v in to_post[:5])
                 extra = f" (+{len(to_post) - 5})" if len(to_post) > 5 else ""
                 logger.info(
-                    "PREVIEW user=%s: отправим %s вакансий — %s%s",
+                    "PREVIEW user=%s: отправим %s вакансий (новых всего %s) — %s%s",
                     user_id,
                     len(to_post),
+                    len(all_new),
                     titles,
                     extra,
                 )
+
+    @staticmethod
+    def _limit_freshest(vacancies: list[Vacancy]) -> list[Vacancy]:
+        """Не больше MAX_VACANCIES_PER_DIGEST самых свежих; порядок показа прежний."""
+        if len(vacancies) <= MAX_VACANCIES_PER_DIGEST:
+            return vacancies
+        freshest = sorted(
+            vacancies,
+            key=lambda v: ensure_aware(v.published_at).timestamp() if v.published_at else 0,
+            reverse=True,
+        )[:MAX_VACANCIES_PER_DIGEST]
+        keep = {v.uid for v in freshest}
+        return [v for v in vacancies if v.uid in keep]
 
     @staticmethod
     def _roles_complete(
@@ -270,7 +291,8 @@ class SubscriberService:
     ) -> tuple[int, bool]:
         """(сколько сообщений ушло, было ли это «новых нет»)."""
         new_vacancies = self._filter_new_for_user(user_id, fresh_vacancies)
-        to_post = dedupe_by_title_company(new_vacancies)
+        all_new = dedupe_by_title_company(new_vacancies)
+        to_post = self._limit_freshest(all_new)
         role_label = format_digest_roles_label(role_ids)
 
         messages, included = format_subscriber_digest(
@@ -278,6 +300,7 @@ class SubscriberService:
             to_post,
             total_found,
             self.settings.max_vacancy_age_hours,
+            total_new=len(all_new),
         )
 
         if included == 0:
