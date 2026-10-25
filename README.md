@@ -40,6 +40,7 @@
 | Дизайн | UX/UI \| Продуктовый дизайнер, Коммуникационный дизайнер, Графический дизайнер, Арт-директор |
 | Frontend | React, Vue, Angular |
 | Backend | Python, Java, Go, PHP, C# / .NET |
+| DevOps | DevOps / SRE |
 | Fullstack | Fullstack |
 | Mobile | Flutter, iOS, Android, React Native |
 | Продукт | Product Manager, Product Owner |

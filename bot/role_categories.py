@@ -37,6 +37,11 @@ CATEGORIES: dict[str, RoleCategory] = {
         title="Fullstack",
         role_ids=("fullstack",),
     ),
+    "devops": RoleCategory(
+        id="devops",
+        title="DevOps",
+        role_ids=("devops",),
+    ),
     "mobile": RoleCategory(
         id="mobile",
         title="Mobile",

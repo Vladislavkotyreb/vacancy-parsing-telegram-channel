@@ -828,3 +828,42 @@ class CSharpDeveloperTest(unittest.TestCase):
         for title in ("C#/.NET-разработчик", "Senior .NET Engineer", "Разработчик C#"):
             for role_id in ("backend_python", "backend_java", "backend_go", "backend_php"):
                 self.assertFalse(ROLES[role_id].matcher(title), (role_id, title))
+
+
+# --- DevOps / SRE (25.10.2026). Заголовки — из живых лент Хабра, GetMatch, GeekJob, мира. ---
+from bot.role_filters import is_devops_vacancy  # noqa: E402
+
+
+class DevOpsTest(unittest.TestCase):
+    def test_devops_titles(self):
+        for title in (
+            "DevOps Engineer", "DevOps-инженер (Kubernetes)", "Senior DevOps Engineer / Techlead",
+            "DevSecOps-инженер", "Senior Dev Ops Engineer", "SRE инженер / DevOps",
+            "Senior Site Reliability Engineer", "Платформенный SRE", "Platform Engineer",
+            "Инженер-разработчик по надёжности и эксплуатации (SRE-инженер)",
+            "Системный администратор с функцией DevOps", "DevOps-инженер (стажер)",
+            "Руководитель отдела SRE в Wildberries Банк", "DevOps / MLOps Engineer",
+        ):
+            self.assertTrue(is_devops_vacancy(title), title)
+
+    def test_not_devops(self):
+        for title in (
+            "QA/DevOps Engineer", "Go Platform Engineer (AI VK)", "Lead Data Platform Engineer",
+            "Системный администратор", "MLOps Engineer", "Linux - инженер (техническая поддержка)",
+            "Менеджер по развитию DevOps-продуктов", "Аналитик DevOps-процессов",
+            "Consultor/a DevSecOps - AWS (sector seguros)", "Python-разработчик", "Product Manager",
+            "Sres manager",
+        ):
+            self.assertFalse(is_devops_vacancy(title), title)
+
+    def test_role_is_in_its_own_menu_section(self):
+        self.assertEqual(get_category("devops").role_ids, ("devops",))
+        self.assertEqual(ROLES["devops"].button_label, "DevOps / SRE")
+        self.assertLessEqual(len("s2:role:devops:devops".encode()), 64)
+
+    def test_existing_roles_do_not_take_devops(self):
+        """Новая роль не меняет старые: DevOps как не уходил в разработку, так и не уходит."""
+        for title in ("DevOps Engineer", "Senior Site Reliability Engineer", "DevSecOps-инженер"):
+            for role_id in ROLES:
+                if role_id not in ("devops", "ml_engineer"):
+                    self.assertFalse(ROLES[role_id].matcher(title), (role_id, title))

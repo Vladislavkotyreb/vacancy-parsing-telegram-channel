@@ -259,6 +259,31 @@ def is_csharp_developer_vacancy(title: str) -> bool:
     return _matches(title, CSHARP_INCLUDE, CSHARP_EXCLUDE)
 
 
+# --- DevOps / SRE (25.10.2026) ---
+# Платформенные инженеры — только без языка в названии: «Go Platform Engineer»
+# пишет на Go и уходит в Backend. Чистый MLOps — роль ML-инженера, сисадмины —
+# отдельная профессия; «Системный администратор с функцией DevOps» ловится по слову DevOps.
+DEVOPS_INCLUDE = [
+    re.compile(r"dev\s*-?\s*(?:sec)?\s*ops", re.I),
+    re.compile(r"\bsre\b|site\s*reliability|надёжност\w*\s+и\s+эксплуатац|надежност\w*\s+и\s+эксплуатац", re.I),
+    re.compile(r"\bplatform\s+engineer", re.I),
+]
+DEVOPS_EXCLUDE = [
+    re.compile(r"\bqa\b|\baqa\b|тестиров|тестировщ", re.I),
+    re.compile(r"аналитик|analyst", re.I),
+    re.compile(r"дизайн|designer", re.I),
+    re.compile(r"product\s*(?:manager|owner)|менеджер|manager|presale|пресейл|продаж|sales|маркетолог|marketing|рекрутер|recruit", re.I),
+    re.compile(r"консультант|consultor|consultant", re.I),
+    re.compile(r"data\s+platform", re.I),  # инженер данных, роль Data Engineer
+    # Платформенный инженер с языком в названии — разработчик.
+    re.compile(r"\b(?:go|golang|java|python|php|c\+\+|c#|kotlin|rust|node\.?js)\b.*platform\s+engineer|platform\s+engineer.*\b(?:go|golang|java|python|php)\b", re.I),
+]
+
+
+def is_devops_vacancy(title: str) -> bool:
+    return _matches(title, DEVOPS_INCLUDE, DEVOPS_EXCLUDE)
+
+
 # --- Fullstack и мобильная разработка (24.10.2026) ---
 # Общее: не забирать тестировщиков, аналитиков, дизайнеров и менеджеров. На HH
 # «Fullstack-аналитик», «Fullstack QA», «Дизайнер Fullstack» — около трети

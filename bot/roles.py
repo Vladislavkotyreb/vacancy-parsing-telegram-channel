@@ -24,6 +24,7 @@ from bot.role_filters import (
     is_java_developer_vacancy,
     is_php_developer_vacancy,
     is_csharp_developer_vacancy,
+    is_devops_vacancy,
     is_fullstack_vacancy,
     is_flutter_developer_vacancy,
     is_ios_developer_vacancy,
@@ -164,6 +165,13 @@ ROLES: dict[str, Role] = {
         button_label="Backend | C# / .NET",
         hh_queries=("c#", ".net", "asp.net"),
         matcher=is_csharp_developer_vacancy,
+    ),
+    "devops": Role(
+        id="devops",
+        label="DevOps-инженера",
+        button_label="DevOps / SRE",
+        hh_queries=("devops", "sre", "site reliability", "devsecops"),
+        matcher=is_devops_vacancy,
     ),
     "fullstack": Role(
         id="fullstack",
