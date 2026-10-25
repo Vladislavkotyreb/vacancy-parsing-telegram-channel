@@ -34,6 +34,7 @@ except ImportError:
     from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
 
 from bot.config import Settings
+from bot.runtime import limit_threads
 from bot.database import VacancyDatabase
 from bot.digest_more import (
     DIGEST_MORE,
@@ -737,6 +738,7 @@ async def main() -> None:
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    limit_threads()
 
     settings = Settings.from_env()
     db = VacancyDatabase(settings.db_path)

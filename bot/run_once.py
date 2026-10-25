@@ -19,11 +19,27 @@ from aiogram.enums import ParseMode
 
 from bot.broadcast import load_broadcast, run_broadcast, send_preview
 from bot.config import Settings
+from bot.runtime import limit_threads
 from bot.database import VacancyDatabase
 from bot.service import VacancyService
 from bot.subscriber_service import SubscriberService
 
 logger = logging.getLogger(__name__)
+
+# Утренняя рассылка пишет лог сама: в CRON её запускают без перенаправления
+# вывода, и 25.10.2026 сбой рассылки не оставил следов.
+DIGEST_LOG = Path(__file__).resolve().parent.parent / "logs" / "digest.log"
+
+
+def _log_to_file(path: Path) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(path, encoding="utf-8")
+    except OSError:
+        logger.exception("Не могу писать лог в %s", path)
+        return
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+    logging.getLogger().addHandler(handler)
 
 
 def parse_args() -> argparse.Namespace:
@@ -101,12 +117,20 @@ async def main() -> int:
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    limit_threads()
 
     args = parse_args()
-    settings = Settings.from_env()
-    db = VacancyDatabase(settings.db_path)
-    bot = Bot(token=settings.telegram_bot_token)
-    service = VacancyService(settings, db, bot)
+    if args.mode == "subscribers":
+        _log_to_file(DIGEST_LOG)
+    try:
+        settings = Settings.from_env()
+        db = VacancyDatabase(settings.db_path)
+        bot = Bot(token=settings.telegram_bot_token)
+        service = VacancyService(settings, db, bot)
+    except Exception:
+        # Без этого ошибка старта уходила только в stderr, а CRON его не сохраняет.
+        logger.exception("Режим %s не запустился", args.mode)
+        return 1
 
     admin_id = os.getenv("TELEGRAM_ADMIN_ID", "").strip()
 
@@ -186,8 +210,16 @@ async def main() -> int:
             )
         await _notify_admin(bot, admin_id, msg)
         return 0
-    except Exception:
+    except Exception as exc:
         logger.exception("Ошибка выполнения режима %s", args.mode)
+        if args.mode == "subscribers":
+            # Раньше упавшая рассылка ничего не сообщала: о сбое узнавали от подписчиков.
+            try:
+                await _notify_admin(
+                    bot, admin_id, f"⛔ Рассылка подписчикам упала: {type(exc).__name__}: {exc}\nЛог: logs/digest.log"
+                )
+            except Exception:
+                logger.exception("Не смог сообщить админу о падении рассылки")
         return 1
     finally:
         await bot.session.close()
