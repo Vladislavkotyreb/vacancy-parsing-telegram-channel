@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
 from typing import Any, Callable, Optional
 
 import aiohttp
@@ -29,6 +30,27 @@ HH_REQUEST_DELAY_SEC = 0.2
 HH_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=20)
 HH_RETRY_DELAYS_SEC = (2, 5)  # повторы после первой неудачи
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
+# Предохранитель: HH лежит — не тратим по минуте на каждую страницу каждой
+# роли (без него сбор растягивался на часы). После N неудач подряд HH не
+# опрашиваем HH_PAUSE_SEC, роли собираются из остальных площадок как неполные.
+HH_BREAKER_FAILURES = 3
+HH_PAUSE_SEC = 600
+_breaker = {"failures": 0, "paused_until": 0.0}
+
+
+def _hh_paused() -> bool:
+    return time.monotonic() < _breaker["paused_until"]
+
+
+def _hh_result(ok: bool) -> None:
+    if ok:
+        _breaker["failures"] = 0
+        return
+    _breaker["failures"] += 1
+    if _breaker["failures"] >= HH_BREAKER_FAILURES:
+        _breaker["paused_until"] = time.monotonic() + HH_PAUSE_SEC
+        _breaker["failures"] = 0
+        logger.warning("HH.ru не отвечает %s раз подряд — пауза %s с", HH_BREAKER_FAILURES, HH_PAUSE_SEC)
 
 
 def _flatten_params(params: dict[str, Any]) -> list[tuple[str, str]]:
@@ -243,19 +265,26 @@ class HHParser(BaseParser):
         """(статус, JSON) с таймаутом и повторами; JSON = None — страницу не получили."""
         flat = _flatten_params(params)
         status: Optional[int] = None
+        body = ""
+        if _hh_paused():
+            return None, None
         for attempt in range(len(HH_RETRY_DELAYS_SEC) + 1):
             try:
                 async with session.get(self.API_URL, params=flat, timeout=HH_REQUEST_TIMEOUT) as resp:
                     status = resp.status
                     if status == 200:
-                        return status, await resp.json()
+                        data = await resp.json()
+                        _hh_result(True)
+                        return status, data
                     if status == 403:
+                        _hh_result(True)  # HH отвечает, просто не пускает
                         return status, None
                     body = (await resp.text())[:200]
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
                 body = repr(exc)
             else:
                 if status not in _RETRY_STATUSES:
+                    _hh_result(True)
                     logger.warning(
                         "HH.ru API %s params=%s: %s",
                         status, {k: v for k, v in params.items() if k != "page"}, body,
@@ -263,6 +292,7 @@ class HHParser(BaseParser):
                     return status, None
             if attempt < len(HH_RETRY_DELAYS_SEC):
                 await asyncio.sleep(HH_RETRY_DELAYS_SEC[attempt])
+        _hh_result(False)
         logger.warning(
             "HH.ru: не получил страницу и после повторов (status=%s) params=%s: %s",
             status, {k: v for k, v in params.items() if k != "page"}, body,

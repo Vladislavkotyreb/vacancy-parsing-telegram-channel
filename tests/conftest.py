@@ -28,3 +28,13 @@ def _quiet_world_feeds(monkeypatch):
     for name in ("_fetch_himalayas", "_fetch_wwr", "_fetch_jobicy"):
         monkeypatch.setattr(sc, name, AsyncMock(return_value=[]))
     monkeypatch.setattr(sc, "SIDE_SOURCE_RETRY_DELAY_SEC", 0)
+
+
+@pytest.fixture(autouse=True)
+def _reset_hh_breaker():
+    """Предохранитель HH общий на процесс — между тестами его сбрасываем."""
+    from bot.parsers import hh
+
+    hh._breaker.update(failures=0, paused_until=0.0)
+    yield
+    hh._breaker.update(failures=0, paused_until=0.0)

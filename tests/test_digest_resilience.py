@@ -108,6 +108,17 @@ class DigestResilienceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats.blocked, 1)
 
 
+class TelegramOutageTest(DigestResilienceTest):
+    async def test_outage_stops_pass_instead_of_running_all_day(self):
+        for user_id in range(1, 21):
+            self.db.set_subscriber_roles(user_id, ["backend_python"])
+        bot = _Bot([TelegramServerError(METHOD, "Bad Gateway")] * 10_000)
+        stats = await self._run(bot)
+        self.assertEqual(len(stats.failed_users), 20)
+        # Два прохода × 5 подписчиков подряд × 4 попытки — а не 20 × 4 × 2.
+        self.assertEqual(10_000 - len(bot.script), 2 * 5 * 4)
+
+
 class DigestLockTest(unittest.TestCase):
     def test_second_lock_is_refused_and_released_on_close(self):
         with mock.patch.object(run_once, "DIGEST_LOG", Path(tempfile.mkdtemp()) / "digest.log"):

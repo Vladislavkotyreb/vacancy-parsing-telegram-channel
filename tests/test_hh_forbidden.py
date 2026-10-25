@@ -213,3 +213,34 @@ class HHNetworkFailureTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HHBreakerTest(unittest.IsolatedAsyncioTestCase):
+    """Ревью 25.10.2026: без предохранителя лежащий HH растягивал сбор на часы."""
+
+    async def asyncSetUp(self) -> None:
+        sleep = mock.patch("bot.parsers.hh.asyncio.sleep", new=AsyncMock())
+        sleep.start()
+        self.addCleanup(sleep.stop)
+
+    async def test_hh_down_stops_requests_for_other_roles(self):
+        import aiohttp
+        session = _FlakySession([aiohttp.ClientConnectionError("down")] * 1000)
+        for _ in range(10):  # 10 ролей
+            parser = HHParser(_settings())
+            await parser._search(session, {}, {"text": "x"}, matcher=lambda t: True,
+                                 max_pages=1, forbidden=False)
+            self.assertTrue(parser.incomplete)
+        # 3 страницы × 3 попытки до срабатывания, дальше — ни одного запроса.
+        self.assertEqual(session.calls, 9)
+
+    async def test_success_resets_failures(self):
+        import aiohttp
+        from bot.parsers import hh
+        session = _FlakySession([aiohttp.ClientConnectionError("x")] * 3)
+        await HHParser(_settings())._search(session, {}, {"text": "x"}, matcher=lambda t: True,
+                                            max_pages=1, forbidden=False)
+        await HHParser(_settings())._search(session, {}, {"text": "x"}, matcher=lambda t: True,
+                                            max_pages=1, forbidden=False)
+        self.assertEqual(hh._breaker["failures"], 0)
+        self.assertFalse(hh._hh_paused())

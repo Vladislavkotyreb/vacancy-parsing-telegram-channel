@@ -141,7 +141,12 @@ class StaleCallbackMiddleware:
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        if isinstance(event, CallbackQuery) and not isinstance(event.message, Message):
+        # «Показать остальные» работает и без сообщения: остаток берётся по id.
+        if (
+            isinstance(event, CallbackQuery)
+            and not isinstance(event.message, Message)
+            and not (event.data or "").startswith(DIGEST_MORE)
+        ):
             await _answer(event, STALE_BUTTON_TEXT, show_alert=True)
             return None
         return await handler(event, data)

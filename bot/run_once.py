@@ -207,8 +207,8 @@ async def main() -> int:
                     )
                 if stats.limited_roles:
                     lines.append(
-                        "⚠️ HH ограничил запросы, подборка неполная: "
-                        f"{', '.join(stats.limited_roles)}"
+                        "⚠️ Сбор неполный (HH или другая площадка не ответили), "
+                        f"«новых нет» им не писали: {', '.join(stats.limited_roles)}"
                     )
                 await _notify_admin(bot, admin_id, "\n".join(lines), retries=3)
             return 0

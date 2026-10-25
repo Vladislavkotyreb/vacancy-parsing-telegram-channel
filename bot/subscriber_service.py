@@ -47,6 +47,9 @@ MAX_VACANCIES_PER_DIGEST = 30
 SEND_RETRY_DELAYS_SEC = (10, 30, 60)
 MAX_RETRY_AFTER_SEC = 120
 SECOND_PASS_DELAY_SEC = 60
+# Телеграм лежит: после стольких подписчиков подряд без доставки проход
+# останавливаем — иначе повторы растягивали рассылку на весь день.
+MAX_FAILED_IN_A_ROW = 5
 
 
 @dataclass
@@ -89,19 +92,34 @@ class SubscriberService:
             limited_roles=limited_roles,
         )
 
-        retry: list[dict] = []
-        for row in subscribers:
-            if not await self._deliver(row, cache, failed_roles, limited_roles, stats):
-                retry.append(row)
-
+        retry = await self._pass(subscribers, cache, failed_roles, limited_roles, stats)
         if retry:
             logger.warning("Не дошло %s подписчикам — второй проход через %s с", len(retry), SECOND_PASS_DELAY_SEC)
             await asyncio.sleep(SECOND_PASS_DELAY_SEC)
-            for row in retry:
-                if not await self._deliver(row, cache, failed_roles, limited_roles, stats):
-                    stats.failed_users.append(int(row["user_id"]))
+            left = await self._pass(retry, cache, failed_roles, limited_roles, stats)
+            stats.failed_users.extend(int(row["user_id"]) for row in left)
 
         return stats
+
+    async def _pass(self, rows, cache, failed_roles, limited_roles, stats) -> list[dict]:
+        """Один проход по подписчикам; возвращает тех, кому не дошло."""
+        failed: list[dict] = []
+        in_a_row = 0
+        for index, row in enumerate(rows):
+            if await self._deliver(row, cache, failed_roles, limited_roles, stats):
+                in_a_row = 0
+                continue
+            failed.append(row)
+            in_a_row += 1
+            if in_a_row >= MAX_FAILED_IN_A_ROW:
+                rest = rows[index + 1:]
+                logger.error(
+                    "%s подписчикам подряд не дошло — Телеграм недоступен, проход остановлен (осталось %s)",
+                    in_a_row, len(rest),
+                )
+                failed.extend(rest)
+                break
+        return failed
 
     async def _deliver(
         self,
