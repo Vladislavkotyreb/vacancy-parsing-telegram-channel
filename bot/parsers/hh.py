@@ -287,7 +287,6 @@ class HHParser(BaseParser):
             published_at=published_at,
             work_format=work_format,
             grade=resolve_grade(title, hh_experience_id),
-            experience=hh_experience_id,
         )
 
     @staticmethod

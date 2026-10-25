@@ -21,13 +21,12 @@ from bot.database import VacancyDatabase
 from bot.cross_source import dedupe_across_sources
 from bot.dates import ensure_aware, is_fresh
 from bot.regions import for_region
-from bot.grade_filter import filter_by_levels
 from bot.digest_more import more_keyboard
 from bot.models import Vacancy
 from bot.roles import get_role
 from bot.russian import format_digest_roles_label
 from bot.subscriber_collect import SourceLimited, collect_for_role, shared_feeds
-from bot.subscriber_formatters import SHARE_START, format_empty_notice, format_subscriber_digest
+from bot.subscriber_formatters import format_empty_notice, format_subscriber_digest
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +57,6 @@ class SubscriberService:
         self.settings = settings
         self.db = db
         self.bot = bot
-        # Ссылка на бота с меткой для строки «переслать коллеге» в конце подборки.
-        self.share_url: Optional[str] = None
 
     async def run_daily_digests(self) -> DigestStats:
         subscribers = self.db.list_active_subscribers()
@@ -70,7 +67,6 @@ class SubscriberService:
         cache, failed_roles, limited_roles = await self._collect_roles_once(
             self._needed_roles(subscribers)
         )
-        self.share_url = await self._share_url()
         stats = DigestStats(
             subscribers=len(subscribers),
             roles_collected=len(cache),
@@ -87,14 +83,12 @@ class SubscriberService:
 
             try:
                 region = self.db.get_region(user_id)
-                levels = self.db.get_grades(user_id)
-                vacancies, fresh = self._merge_for_roles(cache, role_ids, region, levels)
+                vacancies, fresh = self._merge_for_roles(cache, role_ids, region)
                 logger.info(
-                    "Подписчик %s roles=%s region=%s levels=%s: найдено=%s, свежих=%s",
+                    "Подписчик %s roles=%s region=%s: найдено=%s, свежих=%s",
                     user_id,
                     ",".join(role_ids),
                     region,
-                    ",".join(levels) or "all",
                     len(vacancies),
                     len(fresh),
                 )
@@ -140,15 +134,13 @@ class SubscriberService:
                 continue
 
             region = self.db.get_region(user_id)
-            levels = self.db.get_grades(user_id)
-            vacancies, fresh = self._merge_for_roles(cache, role_ids, region, levels)
+            vacancies, fresh = self._merge_for_roles(cache, role_ids, region)
             label = format_digest_roles_label(role_ids)
             logger.info(
-                "PREVIEW user=%s roles=%s region=%s levels=%s %s: собрано=%s, свежих=%s",
+                "PREVIEW user=%s roles=%s region=%s %s: собрано=%s, свежих=%s",
                 user_id,
                 ",".join(role_ids),
                 region,
-                ",".join(levels) or "all",
                 label,
                 len(vacancies),
                 len(fresh),
@@ -272,30 +264,16 @@ class SubscriberService:
         )
         return cache, failed, limited
 
-    async def _share_url(self) -> Optional[str]:
-        """Ссылка на бота с меткой. Не узнали имя бота — подборка уйдёт без строки."""
-        try:
-            me = await self.bot.get_me()
-        except Exception as exc:
-            logger.warning("Не узнал имя бота для ссылки «переслать коллеге»: %r", exc)
-            return None
-        return f"https://t.me/{me.username}?start={SHARE_START}" if me.username else None
-
     def _merge_for_roles(
-        self,
-        cache: dict[str, list[Vacancy]],
-        role_ids: list[str],
-        region: str = "cis",
-        levels: Optional[list[str]] = None,
+        self, cache: dict[str, list[Vacancy]], role_ids: list[str], region: str = "cis"
     ) -> tuple[list[Vacancy], list[Vacancy]]:
-        """Вакансии ролей подписчика с площадок его региона (СНГ / мир / оба)
-        и его уровня. Вакансии с неизвестным уровнем остаются (bot/grade_filter.py)."""
+        """Вакансии ролей подписчика с площадок его региона (СНГ / мир / оба)."""
         merged: dict[str, Vacancy] = {}
         for role_id in role_ids:
             for vacancy in for_region(cache.get(role_id, []), region):
                 merged[vacancy.uid] = vacancy
 
-        vacancies = filter_by_levels(list(merged.values()), levels or [])
+        vacancies = list(merged.values())
         fresh = self._filter_fresh(vacancies)
         return vacancies, fresh
 
@@ -335,7 +313,6 @@ class SubscriberService:
             self.settings.max_vacancy_age_hours,
             total_new=len(all_new),
             region=region,
-            share_url=self.share_url,
         )
 
         if included == 0:
