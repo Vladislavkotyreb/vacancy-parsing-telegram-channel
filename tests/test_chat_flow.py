@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 from unittest.mock import AsyncMock
 
 from bot.chat_main import (
@@ -281,3 +282,63 @@ class SavedRolesForCategoryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UnsubscribedUserTest(FlowSimulationTest):
+    """Аудит 25.10.2026: отписавшийся молча подписывался обратно."""
+
+    async def test_empty_continue_after_stop_does_not_resubscribe(self):
+        self.db.set_subscriber_roles(self.user_id, ["frontend_react", "product_designer"])
+        self.db.deactivate_subscriber(self.user_id)
+        await s1_pick_specialty(self._cb(f"{S1_CAT}frontend"), self.db)
+        self.assertEqual(_draft_from_keyboard(self.message.reply_markup), set(), "старые роли не отмечены")
+        await s2_save(self._cb(f"{S2_SAVE}frontend"), self.db)
+        self.assertEqual(self.db.get_subscriber_roles(self.user_id), [])
+        self.assertEqual(self.db.list_active_subscribers(), [])
+
+    async def test_new_subscription_after_stop_does_not_bring_back_old_roles(self):
+        self.db.set_subscriber_roles(self.user_id, ["frontend_react", "product_designer"])
+        self.db.deactivate_subscriber(self.user_id)
+        await s1_pick_specialty(self._cb(f"{S1_CAT}backend"), self.db)
+        await s2_toggle_vacancy(self._cb(f"{S2_ROLE}backend:backend_go"), self.db)
+        await s2_save(self._cb(f"{S2_SAVE}backend"), self.db)
+        self.assertEqual(self.db.get_subscriber_roles(self.user_id), ["backend_go"])
+
+
+class CallbackRobustnessTest(FlowSimulationTest):
+    """Аудит 25.10.2026: опоздавшие нажатия, кнопки прошлых версий, старые сообщения."""
+
+    async def test_too_old_query_still_shows_confirmation(self):
+        from aiogram.exceptions import TelegramBadRequest
+        from aiogram.methods import AnswerCallbackQuery
+
+        self.message.reply_markup = vacancy_keyboard("backend", {"backend_go"})
+        cb = self._cb(f"{S2_SAVE}backend")
+        cb.answer = AsyncMock(side_effect=TelegramBadRequest(AnswerCallbackQuery(callback_query_id="1"), "query is too old"))
+        await s2_save(cb, self.db)
+        self.assertEqual(self.db.get_subscriber_roles(self.user_id), ["backend_go"])
+        self.assertIn("✅ Готово", self.edited_texts[-1])
+        self.message.answer.assert_awaited()  # меню тоже ушло
+
+    async def test_old_format_button_gets_an_answer(self):
+        from bot.chat_main import STALE_BUTTON_TEXT, stale_button
+
+        cb = self._cb("role:product_designer")
+        await stale_button(cb)
+        cb.answer.assert_awaited_with(STALE_BUTTON_TEXT, show_alert=True)
+
+    async def test_inaccessible_message_is_answered_not_crashed(self):
+        from aiogram.types import CallbackQuery, Chat, InaccessibleMessage, User
+
+        from bot.chat_main import StaleCallbackMiddleware
+
+        event = CallbackQuery(
+            id="1", chat_instance="c", data=f"{S2_SAVE}backend",
+            from_user=User(id=self.user_id, is_bot=False, first_name="А"),
+            message=InaccessibleMessage(chat=Chat(id=self.user_id, type="private"), message_id=5, date=0),
+        )
+        handler = AsyncMock()
+        with mock.patch("bot.chat_main._answer", new=AsyncMock()) as answered:
+            await StaleCallbackMiddleware()(handler, event, {})
+        handler.assert_not_awaited()
+        answered.assert_awaited()

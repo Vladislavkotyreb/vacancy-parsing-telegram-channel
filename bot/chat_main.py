@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 from aiogram import Bot, Dispatcher, F, Router
-from aiogram.exceptions import TelegramNetworkError
+from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 from aiogram.filters import Command
 from aiogram.types import (
     CallbackQuery,
@@ -76,27 +76,75 @@ STARTUP_RETRY_DELAYS_SEC = (5, 10, 20, 30, 60, 60)
 
 # Префикс отмеченной роли в клавиатуре — он же признак «роль в черновике».
 MARK = "✓ "
+STALE_BUTTON_TEXT = "Эта кнопка устарела. Нажми «Выбрать роли» в меню внизу."
+
+
+# Один экземпляр — через flock, а не по pid в файле. Pid-замок ломался трижды:
+# бот принимал свой pid за чужой; номер умершего процесса доставался чужой
+# программе — и бот не поднимался вовсе; закрываясь, копия стирала pid-файл
+# следующей, и ручной перезапуск плодил дубли (4 копии 25.10.2026). flock
+# снимает ядро при любой смерти процесса, даже kill -9; файл замка не удаляют.
+LOCK_FILE = PID_FILE.with_name("chat-bot.lock")
+_lock_handle = None
 
 
 def _acquire_single_instance() -> None:
-    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
-    if PID_FILE.exists():
-        try:
-            old_pid = int(PID_FILE.read_text().strip())
-            # Свой же pid в файле — не конфликт: его мог записать скрипт запуска
-            # раньше, чем мы сюда дошли. Иначе бот принял бы себя за второй
-            # экземпляр и вышел, а watchdog никогда не поднял бы его обратно.
-            if old_pid != os.getpid():
-                os.kill(old_pid, 0)
-                logger.error("Чат-бот уже запущен (pid=%s). Выход.", old_pid)
-                sys.exit(1)
-        except (OSError, ValueError):
-            PID_FILE.unlink(missing_ok=True)
+    global _lock_handle
+    import fcntl
+
+    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(LOCK_FILE, "a")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        logger.error("Чат-бот уже запущен (замок %s занят). Выход.", LOCK_FILE)
+        sys.exit(1)
+    _lock_handle = handle
+    # pid-файл — только для людей: кто сейчас держит бота.
     PID_FILE.write_text(str(os.getpid()))
 
 
 def _release_single_instance() -> None:
-    PID_FILE.unlink(missing_ok=True)
+    global _lock_handle
+    try:
+        if PID_FILE.read_text().strip() == str(os.getpid()):
+            PID_FILE.unlink()
+    except (OSError, ValueError):
+        pass
+    if _lock_handle is not None:
+        _lock_handle.close()
+        _lock_handle = None
+
+
+async def _answer(callback: CallbackQuery, text: Optional[str] = None, show_alert: bool = False) -> None:
+    """Ответ на нажатие, который не роняет обработчик.
+
+    После сбоя сети Телеграм отдаёт накопленные нажатия с опозданием, и ответ
+    на них падает с «query is too old». Раньше это обрывало обработчик уже после
+    записи в базу: роли сохранены, а человек не видит ни подтверждения, ни меню.
+    """
+    try:
+        await callback.answer(text, show_alert=show_alert)
+    except TelegramBadRequest as exc:
+        logger.info("Ответ на нажатие не ушёл (%s): %s", callback.data, exc)
+
+
+class StaleCallbackMiddleware:
+    """Нажатие под сообщением, которое бот уже не может править (слишком старое,
+    удалённое — InaccessibleMessage): у обработчиков нет edit_text, и они падали,
+    а кнопка крутилась без ответа."""
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if isinstance(event, CallbackQuery) and not isinstance(event.message, Message):
+            await _answer(event, STALE_BUTTON_TEXT, show_alert=True)
+            return None
+        return await handler(event, data)
 
 
 class InjectMiddleware:
@@ -451,7 +499,7 @@ async def s0_pick_region(callback: CallbackQuery, db: VacancyDatabase) -> None:
         return
     region = normalize_region(callback.data[len(S0_REGION):])
     db.set_region(callback.from_user.id, region)
-    await callback.answer(f"Ищу: {REGION_BUTTONS[region]}")
+    await _answer(callback, f"Ищу: {REGION_BUTTONS[region]}")
     await _show_specialty_step(callback.message)
 
 
@@ -462,13 +510,13 @@ async def s1_pick_specialty(callback: CallbackQuery, db: VacancyDatabase) -> Non
 
     category_id = callback.data[len(S1_CAT) :]
     if not get_category(category_id):
-        await callback.answer("Неизвестная специальность", show_alert=True)
+        await _answer(callback, "Неизвестная специальность", show_alert=True)
         return
 
     saved_roles = db.get_subscriber_roles(callback.from_user.id)
     draft = set(_saved_roles_for_category(saved_roles, category_id))
 
-    await callback.answer()
+    await _answer(callback)
     await _show_vacancy_step(callback.message, category_id, draft, saved_roles)
 
 
@@ -479,7 +527,7 @@ async def s2_back(callback: CallbackQuery) -> None:
     if not callback.message:
         return
 
-    await callback.answer("Выбор отменён")
+    await _answer(callback, "Выбор отменён")
     await _show_specialty_step(callback.message)
 
 
@@ -490,10 +538,10 @@ async def s2_toggle_vacancy(callback: CallbackQuery, db: VacancyDatabase) -> Non
 
     category_id, role_id = _parse_role_callback(callback.data)
     if not get_category(category_id):
-        await callback.answer("Сначала выбери специальность", show_alert=True)
+        await _answer(callback, "Сначала выбери специальность", show_alert=True)
         return
     if role_id not in ROLES:
-        await callback.answer("Неизвестная роль", show_alert=True)
+        await _answer(callback, "Неизвестная роль", show_alert=True)
         return
 
     draft = _draft_from_keyboard(callback.message.reply_markup)
@@ -502,7 +550,7 @@ async def s2_toggle_vacancy(callback: CallbackQuery, db: VacancyDatabase) -> Non
     else:
         draft.add(role_id)
 
-    await callback.answer()
+    await _answer(callback)
 
     saved_roles = db.get_subscriber_roles(callback.from_user.id)
     await _show_vacancy_step(callback.message, category_id, draft, saved_roles)
@@ -516,7 +564,7 @@ async def s2_save(callback: CallbackQuery, db: VacancyDatabase) -> None:
     category_id = callback.data[len(S2_SAVE) :]
     category = get_category(category_id)
     if not category:
-        await callback.answer("Сначала выбери направление", show_alert=True)
+        await _answer(callback, "Сначала выбери направление", show_alert=True)
         return
 
     draft = sorted(_draft_from_keyboard(callback.message.reply_markup))
@@ -532,7 +580,7 @@ async def s2_save(callback: CallbackQuery, db: VacancyDatabase) -> None:
             if not db.get_subscriber_roles(callback.from_user.id):
                 db.deactivate_subscriber(callback.from_user.id)
 
-        await callback.answer()
+        await _answer(callback)
         await _show_specialty_step(callback.message)
         return
 
@@ -541,7 +589,7 @@ async def s2_save(callback: CallbackQuery, db: VacancyDatabase) -> None:
         set(category.role_ids),
         draft,
     )
-    await callback.answer("Подписка сохранена")
+    await _answer(callback, "Подписка сохранена")
 
     all_roles = db.get_subscriber_roles(callback.from_user.id)
     roles_text = format_success_roles(all_roles)
@@ -646,7 +694,7 @@ async def cb_users_page(
     if not callback.data or not callback.message or not callback.from_user:
         return
     if not _is_admin(callback.from_user.id, settings):
-        await callback.answer("Только для администратора", show_alert=True)
+        await _answer(callback, "Только для администратора", show_alert=True)
         return
 
     try:
@@ -654,7 +702,7 @@ async def cb_users_page(
     except ValueError:
         page = 1
 
-    await callback.answer()
+    await _answer(callback)
     text, keyboard = await _users_view(bot, db, settings, page)
     await callback.message.edit_text(
         text, parse_mode="HTML", reply_markup=keyboard, disable_web_page_preview=True
@@ -679,11 +727,11 @@ async def cb_digest_more(
         vacancies = pending_overflow(db, settings, user_id, day)
         if not vacancies:
             db.clear_digest_overflow(user_id, day)
-            await callback.answer(NOTHING_LEFT)
+            await _answer(callback, NOTHING_LEFT)
             await _drop_button(callback)
             return
 
-        await callback.answer()
+        await _answer(callback)
         await send_overflow(bot, db, user_id, vacancies)
         db.clear_digest_overflow(user_id, day)
 
@@ -699,6 +747,12 @@ async def _drop_button(callback: CallbackQuery) -> None:
     except Exception as exc:
         # Старое сообщение (недоступно боту) или кнопку уже убрали — не страшно.
         logger.info("Кнопку под подборкой не убрать: %s", exc)
+
+
+@router.callback_query()
+async def stale_button(callback: CallbackQuery) -> None:
+    """Кнопки прошлых версий бота (другой формат callback_data): ответить, а не молчать."""
+    await _answer(callback, STALE_BUTTON_TEXT, show_alert=True)
 
 
 @router.message()
@@ -749,6 +803,7 @@ async def main() -> None:
     dp = Dispatcher()
     dp.update.middleware(InjectMiddleware(db=db, settings=settings))
     dp.update.middleware(TrackActivityMiddleware(db, settings.timezone))
+    dp.callback_query.middleware(StaleCallbackMiddleware())
     dp.include_router(router)
 
     logger.info("Чат-бот подписок запущен (polling)")

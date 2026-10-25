@@ -14,7 +14,7 @@ from bot.config import Settings
 from bot.database import VacancyDatabase
 from bot.models import Vacancy
 from bot.roles import get_role
-from bot.subscriber_collect import _fetch_geekjob, collect_for_role, shared_feeds
+from bot.subscriber_collect import SourceLimited, _fetch_geekjob, collect_for_role, shared_feeds
 from bot.subscriber_formatters import format_subscriber_header
 from bot.subscriber_service import SubscriberService
 
@@ -99,7 +99,7 @@ class GeekJobFeedTest(unittest.IsolatedAsyncioTestCase):
              mock.patch("bot.subscriber_collect._fetch_himalayas", new=AsyncMock(return_value=[])), \
              mock.patch("bot.subscriber_collect._fetch_wwr", new=AsyncMock(return_value=[])), \
              mock.patch("bot.subscriber_collect._fetch_jobicy", new=AsyncMock(return_value=[])), \
-             mock.patch("bot.subscriber_collect._fetch_hh", new=AsyncMock(return_value=([], False))), \
+             mock.patch("bot.subscriber_collect._fetch_hh", new=AsyncMock(return_value=([], ""))), \
              mock.patch("bot.subscriber_collect._fetch_habr", new=AsyncMock(return_value=[])), \
              mock.patch("bot.subscriber_collect._fetch_getmatch", new=AsyncMock(return_value=[])), \
              shared_feeds():
@@ -114,7 +114,7 @@ class GeekJobFeedTest(unittest.IsolatedAsyncioTestCase):
 class GetMatchSharedTest(unittest.IsolatedAsyncioTestCase):
     def patches(self, getmatch):
         return (
-            mock.patch("bot.subscriber_collect._fetch_hh", new=AsyncMock(return_value=([], False))),
+            mock.patch("bot.subscriber_collect._fetch_hh", new=AsyncMock(return_value=([], ""))),
             mock.patch("bot.subscriber_collect._fetch_geekjob", new=AsyncMock(return_value=[])),
             mock.patch("bot.subscriber_collect._fetch_habr", new=AsyncMock(return_value=[])),
             mock.patch("bot.subscriber_collect._fetch_getmatch", new=getmatch),
@@ -164,32 +164,46 @@ class SideSourceFailureTest(unittest.IsolatedAsyncioTestCase):
         for broken in ("_fetch_getmatch", "_fetch_geekjob"):
             with self.subTest(broken=broken), \
                  mock.patch("bot.subscriber_collect._fetch_hh",
-                            new=AsyncMock(return_value=([hh_vacancy], False))), \
+                            new=AsyncMock(return_value=([hh_vacancy], ""))), \
                  mock.patch("bot.subscriber_collect._fetch_geekjob", new=AsyncMock(return_value=[])), \
                  mock.patch("bot.subscriber_collect._fetch_habr", new=AsyncMock(return_value=[])), \
                  mock.patch("bot.subscriber_collect._fetch_getmatch", new=AsyncMock(return_value=[])), \
                  mock.patch(f"bot.subscriber_collect.{broken}",
                             new=AsyncMock(side_effect=RuntimeError("площадка недоступна"))):
-                result = await collect_for_role(_settings(), get_role("backend_python"))
-            self.assertEqual([v.uid for v in result], ["hh.ru:1"])
+                # Площадка не ответила и после повтора: HH остаётся, а роль помечена
+                # неполной — чтобы подписчику не написали ложное «новых нет».
+                with self.assertRaises(SourceLimited) as ctx:
+                    await collect_for_role(_settings(), get_role("backend_python"))
+            self.assertEqual([v.uid for v in ctx.exception.vacancies], ["hh.ru:1"])
 
     async def test_failed_getmatch_is_not_retried_for_every_role(self):
         getmatch = AsyncMock(side_effect=RuntimeError("таймаут"))
-        with mock.patch("bot.subscriber_collect._fetch_hh", new=AsyncMock(return_value=([], False))), \
+        with mock.patch("bot.subscriber_collect._fetch_hh", new=AsyncMock(return_value=([], ""))), \
              mock.patch("bot.subscriber_collect._fetch_geekjob", new=AsyncMock(return_value=[])), \
              mock.patch("bot.subscriber_collect._fetch_habr", new=AsyncMock(return_value=[])), \
              mock.patch("bot.subscriber_collect._fetch_getmatch", new=getmatch), \
              shared_feeds():
             for role_id in ("backend_python", "qa_manual", "data_engineer"):
-                await collect_for_role(_settings(), get_role(role_id))
-        self.assertEqual(getmatch.await_count, 1)
+                with self.assertRaises(SourceLimited):
+                    await collect_for_role(_settings(), get_role(role_id))
+        # Один повтор на прогон, а не по два запроса на каждую роль.
+        self.assertEqual(getmatch.await_count, 2)
+
+    async def test_one_failure_then_success_is_complete(self):
+        getmatch = AsyncMock(side_effect=[RuntimeError("обрыв"), list(GETMATCH_FEED)])
+        with mock.patch("bot.subscriber_collect._fetch_hh", new=AsyncMock(return_value=([], ""))), \
+             mock.patch("bot.subscriber_collect._fetch_geekjob", new=AsyncMock(return_value=[])), \
+             mock.patch("bot.subscriber_collect._fetch_habr", new=AsyncMock(return_value=[])), \
+             mock.patch("bot.subscriber_collect._fetch_getmatch", new=getmatch):
+            result = await collect_for_role(_settings(), get_role("backend_python"))
+        self.assertEqual([v.title for v in result], ["Senior Python Developer"])
 
 
 class SberCareersRemovedTest(unittest.IsolatedAsyncioTestCase):
     async def test_collect_does_not_touch_sber_site(self):
         careers = AsyncMock(return_value=[])
         with mock.patch("bot.parsers.bigtech.BigTechCareersParser.fetch_matching", new=careers), \
-             mock.patch("bot.subscriber_collect._fetch_hh", new=AsyncMock(return_value=([], False))), \
+             mock.patch("bot.subscriber_collect._fetch_hh", new=AsyncMock(return_value=([], ""))), \
              mock.patch("bot.subscriber_collect._fetch_geekjob", new=AsyncMock(return_value=[])), \
              mock.patch("bot.subscriber_collect._fetch_habr", new=AsyncMock(return_value=[])), \
              mock.patch("bot.subscriber_collect._fetch_getmatch", new=AsyncMock(return_value=[])):

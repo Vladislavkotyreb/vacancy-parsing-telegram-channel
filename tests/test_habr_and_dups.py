@@ -133,7 +133,7 @@ class HabrFetchTest(unittest.IsolatedAsyncioTestCase):
             _v("career.habr.com", "Golang-разработчик", "Авито"),
             _v("career.habr.com", "QA Engineer", "Контур", n=2),
         ])
-        with mock.patch("bot.subscriber_collect._fetch_hh", new=AsyncMock(return_value=([], False))), \
+        with mock.patch("bot.subscriber_collect._fetch_hh", new=AsyncMock(return_value=([], ""))), \
              mock.patch("bot.subscriber_collect._fetch_habr", new=habr), \
              mock.patch("bot.subscriber_collect._fetch_geekjob", new=AsyncMock(return_value=[])), \
              mock.patch("bot.subscriber_collect._fetch_getmatch", new=AsyncMock(return_value=[])), \

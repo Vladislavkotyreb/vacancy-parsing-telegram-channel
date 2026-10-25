@@ -23,6 +23,12 @@ from bot.parsers.base import BaseParser
 logger = logging.getLogger(__name__)
 
 HH_REQUEST_DELAY_SEC = 0.2
+# Без своего таймаута aiohttp ждёт ответа до 5 минут, а сеть хостинга рвётся
+# каждые 15–30 минут: один подвисший запрос держал роль минутами, обрыв —
+# ронял всю роль вместе с собранным (аудит 25.10.2026).
+HH_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=20)
+HH_RETRY_DELAYS_SEC = (2, 5)  # повторы после первой неудачи
+_RETRY_STATUSES = {429, 500, 502, 503, 504}
 
 
 def _flatten_params(params: dict[str, Any]) -> list[tuple[str, str]]:
@@ -45,6 +51,8 @@ class HHParser(BaseParser):
         # HH ответил 403 хотя бы раз: собранное неполное. Подписочный сбор
         # сообщает об этом админу, иначе роль тихо собиралась бы пустой.
         self.forbidden_hit = False
+        # Запрос не удался и после повторов (сеть, 5xx): собранное тоже неполное.
+        self.incomplete = False
 
     async def fetch(self) -> list[Vacancy]:
         results: dict[str, Vacancy] = {}
@@ -199,25 +207,18 @@ class HHParser(BaseParser):
 
         for page in range(max_pages):
             params = {**base_params, "page": page}
-            async with session.get(self.API_URL, params=_flatten_params(params)) as resp:
-                if resp.status == 403:
-                    self.forbidden_hit = True
-                    logger.warning(
-                        "HH.ru API 403 (auth=%s). Проверьте HH_ACCESS_TOKEN и HH_USER_AGENT.",
-                        "yes" if self.settings.hh_access_token else "no",
-                    )
-                    return True
-                if resp.status != 200:
-                    body = await resp.text()
-                    logger.warning(
-                        "HH.ru API %s params=%s auth=%s: %s",
-                        resp.status,
-                        {k: v for k, v in params.items() if k != "page"},
-                        "yes" if self.settings.hh_access_token else "no",
-                        body[:200],
-                    )
-                    break
-                data = await resp.json()
+            status, data = await self._get_page(session, params)
+            if status == 403:
+                self.forbidden_hit = True
+                logger.warning(
+                    "HH.ru API 403 (auth=%s). Проверьте HH_ACCESS_TOKEN и HH_USER_AGENT.",
+                    "yes" if self.settings.hh_access_token else "no",
+                )
+                return True
+            if data is None:
+                # Сеть или 5xx и после повторов: собранное оставляем, роль — неполная.
+                self.incomplete = True
+                break
 
             items = data.get("items", [])
             if not items:
@@ -235,6 +236,38 @@ class HHParser(BaseParser):
 
         await asyncio.sleep(HH_REQUEST_DELAY_SEC)
         return False
+
+    async def _get_page(
+        self, session: aiohttp.ClientSession, params: dict[str, Any]
+    ) -> tuple[Optional[int], Optional[dict]]:
+        """(статус, JSON) с таймаутом и повторами; JSON = None — страницу не получили."""
+        flat = _flatten_params(params)
+        status: Optional[int] = None
+        for attempt in range(len(HH_RETRY_DELAYS_SEC) + 1):
+            try:
+                async with session.get(self.API_URL, params=flat, timeout=HH_REQUEST_TIMEOUT) as resp:
+                    status = resp.status
+                    if status == 200:
+                        return status, await resp.json()
+                    if status == 403:
+                        return status, None
+                    body = (await resp.text())[:200]
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                body = repr(exc)
+            else:
+                if status not in _RETRY_STATUSES:
+                    logger.warning(
+                        "HH.ru API %s params=%s: %s",
+                        status, {k: v for k, v in params.items() if k != "page"}, body,
+                    )
+                    return status, None
+            if attempt < len(HH_RETRY_DELAYS_SEC):
+                await asyncio.sleep(HH_RETRY_DELAYS_SEC[attempt])
+        logger.warning(
+            "HH.ru: не получил страницу и после повторов (status=%s) params=%s: %s",
+            status, {k: v for k, v in params.items() if k != "page"}, body,
+        )
+        return status, None
 
     def _period_days(self) -> int:
         hours = self.settings.max_vacancy_age_hours

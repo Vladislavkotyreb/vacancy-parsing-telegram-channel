@@ -7,7 +7,18 @@ LOG_DIR="$BOT_DIR/logs"
 
 mkdir -p "$LOG_DIR"
 
-if ps aux 2>/dev/null | grep -v grep | grep -q "bot.chat_main"; then
+# Жив ли бот — по его замку (bot/chat_main.py, flock на logs/chat-bot.lock):
+# занят — бот работает. Раньше искали «bot.chat_main» в списке процессов, и
+# открытый в редакторе chat_main.py или зависшая команда сходили за живого бота.
+bot_running() {
+    if command -v flock >/dev/null 2>&1; then
+        ! flock -n "$LOG_DIR/chat-bot.lock" true 2>/dev/null
+    else
+        ps -eo args= 2>/dev/null | grep -qE '^[^ ]*python[0-9.]* -m bot\.chat_main'
+    fi
+}
+
+if bot_running; then
     exit 0
 fi
 

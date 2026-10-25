@@ -31,6 +31,25 @@ logger = logging.getLogger(__name__)
 DIGEST_LOG = Path(__file__).resolve().parent.parent / "logs" / "digest.log"
 
 
+def _digest_lock():
+    """Замок на время рассылки: две одновременные (CRON + ручной запуск) слали всё дважды.
+
+    flock снимается ядром при любом завершении процесса, даже kill -9, —
+    «залипшего» замка не бывает. None — замок держит другая рассылка.
+    """
+    import fcntl
+
+    path = DIGEST_LOG.with_name("digest.lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path, "w")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle  # держим открытым до конца процесса
+
+
 def _log_to_file(path: Path) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -153,6 +172,11 @@ async def main() -> int:
             return 0
 
         if args.mode == "subscribers":
+            lock = _digest_lock()
+            if lock is None:
+                logger.warning("Рассылка подписчикам уже идёт — второй запуск пропущен")
+                await _notify_admin(bot, admin_id, "⚠️ Рассылка подписчикам уже идёт — второй запуск пропущен.")
+                return 0
             subscriber_service = SubscriberService(settings, db, bot)
             stats = await subscriber_service.run_daily_digests()
             logger.info(
@@ -166,12 +190,16 @@ async def main() -> int:
             )
             if admin_id:
                 lines = [
-                    "✅ Рассылка подписчикам.",
+                    "⚠️ Рассылка подписчикам: дошла не всем." if stats.failed_users else "✅ Рассылка подписчикам.",
                     f"Активных подписчиков: {stats.subscribers}",
                     f"Отправлено сообщений: {stats.messages}",
                     f"Ролей собрано: {stats.roles_collected}",
                     f"Написали «новых нет»: {stats.empty_notices}",
                 ]
+                if stats.failed_users:
+                    lines.append(f"⚠️ Не дошло и после повтора: {len(stats.failed_users)} — подробности в logs/digest.log")
+                if stats.blocked:
+                    lines.append(f"Заблокировали бота: {stats.blocked}")
                 if stats.failed_roles:
                     # Без этой строки сбой сбора выглядит так же, как пустой день.
                     lines.append(
@@ -182,7 +210,7 @@ async def main() -> int:
                         "⚠️ HH ограничил запросы, подборка неполная: "
                         f"{', '.join(stats.limited_roles)}"
                     )
-                await _notify_admin(bot, admin_id, "\n".join(lines))
+                await _notify_admin(bot, admin_id, "\n".join(lines), retries=3)
             return 0
 
         if args.mode == "broadcast":
@@ -216,7 +244,8 @@ async def main() -> int:
             # Раньше упавшая рассылка ничего не сообщала: о сбое узнавали от подписчиков.
             try:
                 await _notify_admin(
-                    bot, admin_id, f"⛔ Рассылка подписчикам упала: {type(exc).__name__}: {exc}\nЛог: logs/digest.log"
+                    bot, admin_id, f"⛔ Рассылка подписчикам упала: {type(exc).__name__}: {exc}\nЛог: logs/digest.log",
+                    retries=3,
                 )
             except Exception:
                 logger.exception("Не смог сообщить админу о падении рассылки")
@@ -264,16 +293,21 @@ async def _notify_admin(
     admin_id: str,
     text: str,
     parse_mode: str | None = None,
+    retries: int = 0,
 ) -> None:
     if not admin_id:
         return
-    try:
-        kwargs = {"chat_id": int(admin_id), "text": text}
-        if parse_mode:
-            kwargs["parse_mode"] = parse_mode
-        await bot.send_message(**kwargs)
-    except Exception:
-        logger.exception("Не удалось отправить уведомление admin_id=%s", admin_id)
+    kwargs = {"chat_id": int(admin_id), "text": text}
+    if parse_mode:
+        kwargs["parse_mode"] = parse_mode
+    for attempt in range(retries + 1):
+        try:
+            await bot.send_message(**kwargs)
+            return
+        except Exception:
+            logger.exception("Не удалось отправить уведомление admin_id=%s (попытка %s)", admin_id, attempt + 1)
+            if attempt < retries:
+                await asyncio.sleep(30)
 
 
 if __name__ == "__main__":

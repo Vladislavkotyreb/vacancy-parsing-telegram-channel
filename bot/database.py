@@ -27,7 +27,9 @@ class VacancyDatabase:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path)
+        # Три процесса пишут в одну базу (чат-бот, канал, рассылка). 5 секунд по
+        # умолчанию мало: при чужой записи падали с «database is locked».
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         try:
@@ -190,6 +192,11 @@ class VacancyDatabase:
                 "CREATE INDEX IF NOT EXISTS idx_subscriber_sent_merge "
                 "ON subscriber_sent (user_id, merge_key)"
             )
+            # Статистика считает по дате отправки: без индекса /stats читал всю
+            # таблицу и на секунды останавливал бота.
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_subscriber_sent_at ON subscriber_sent (sent_at)"
+            )
 
             self._migrate_subscriber_roles(conn)
 
@@ -304,8 +311,10 @@ class VacancyDatabase:
             return row is not None
 
     def _migrate_subscriber_roles(self, conn: sqlite3.Connection) -> None:
+        # Пустую роль не переносим: она бы ставила подписчику «неполный сбор»
+        # навсегда, и он ничего не получал бы.
         rows = conn.execute(
-            "SELECT user_id, role FROM subscribers WHERE active = 1"
+            "SELECT user_id, role FROM subscribers WHERE active = 1 AND role != ''"
         ).fetchall()
         for row in rows:
             conn.execute(
@@ -363,13 +372,17 @@ class VacancyDatabase:
         self.set_subscriber_roles(user_id, merged)
 
     def get_subscriber_roles(self, user_id: int) -> list[str]:
+        """Роли действующей подписки. У отписавшегося — пусто: раньше его старые
+        роли всплывали в меню, и сохранение любого направления молча
+        подписывало его обратно (аудит 25.10.2026)."""
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT role
-                FROM subscriber_roles
-                WHERE user_id = ?
-                ORDER BY role
+                SELECT sr.role
+                FROM subscriber_roles sr
+                JOIN subscribers s ON s.user_id = sr.user_id AND s.active = 1
+                WHERE sr.user_id = ?
+                ORDER BY sr.role
                 """,
                 (user_id,),
             ).fetchall()
@@ -732,27 +745,53 @@ class VacancyDatabase:
                 ),
             )
 
+    def mark_sent_many(self, user_id: int, vacancies: Iterable[Vacancy]) -> None:
+        """Несколько отметок одной транзакцией: все или ни одной."""
+        now = datetime.now(timezone.utc).isoformat()
+        rows = [
+            (
+                user_id,
+                vacancy.uid,
+                dedupe_key(vacancy.title, vacancy.company or ""),
+                merge_key(vacancy.title, vacancy.company or ""),
+                now,
+            )
+            for vacancy in vacancies
+        ]
+        if not rows:
+            return
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO subscriber_sent
+                (user_id, vacancy_uid, dedup_key, merge_key, sent_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+
     def unsent_to_subscriber(self, user_id: int, vacancies: Iterable[Vacancy]) -> list[Vacancy]:
         """Те, что подписчику ещё не уходили — ни по id, ни дублем с другой площадки."""
         unsent = []
         with self._connect() as conn:
             for vacancy in vacancies:
                 company = vacancy.company or ""
+                # Три отдельных EXISTS: с OR SQLite брал только user_id и читал
+                # всю историю человека на каждую вакансию (в 120 раз медленнее).
                 row = conn.execute(
                     """
-                    SELECT 1 FROM subscriber_sent
-                    WHERE user_id = ?
-                      AND (vacancy_uid = ? OR dedup_key = ? OR merge_key = ?)
-                    LIMIT 1
+                    SELECT
+                        EXISTS(SELECT 1 FROM subscriber_sent WHERE user_id = ? AND vacancy_uid = ?)
+                        OR EXISTS(SELECT 1 FROM subscriber_sent WHERE user_id = ? AND dedup_key = ?)
+                        OR EXISTS(SELECT 1 FROM subscriber_sent WHERE user_id = ? AND merge_key = ?)
                     """,
                     (
-                        user_id,
-                        vacancy.uid,
-                        dedupe_key(vacancy.title, company),
-                        merge_key(vacancy.title, company),
+                        user_id, vacancy.uid,
+                        user_id, dedupe_key(vacancy.title, company),
+                        user_id, merge_key(vacancy.title, company),
                     ),
                 ).fetchone()
-                if row is None:
+                if not row[0]:
                     unsent.append(vacancy)
         return unsent
 

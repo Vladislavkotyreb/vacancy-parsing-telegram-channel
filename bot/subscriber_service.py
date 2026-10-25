@@ -14,7 +14,13 @@ except ImportError:
 from aiogram import Bot
 from aiogram.enums import ParseMode
 from aiogram.types import InlineKeyboardMarkup, Message
-from aiogram.exceptions import TelegramForbiddenError, TelegramNetworkError, TelegramRetryAfter
+from aiogram.exceptions import (
+    ClientDecodeError,
+    TelegramForbiddenError,
+    TelegramNetworkError,
+    TelegramRetryAfter,
+    TelegramServerError,
+)
 
 from bot.config import Settings
 from bot.database import VacancyDatabase
@@ -26,6 +32,7 @@ from bot.models import Vacancy
 from bot.roles import get_role
 from bot.russian import format_digest_roles_label
 from bot.subscriber_collect import SourceLimited, collect_for_role, shared_feeds
+from bot.formatters import format_vacancy
 from bot.subscriber_formatters import format_empty_notice, format_subscriber_digest
 
 logger = logging.getLogger(__name__)
@@ -35,6 +42,11 @@ logger = logging.getLogger(__name__)
 # Отправляем самые свежие; остальные — по кнопке «Показать остальные»
 # (bot/digest_more.py), а кто не нажал, получит их в следующие дни, пока не устареют.
 MAX_VACANCIES_PER_DIGEST = 30
+# Телеграм отвечает 502 минутами (25.10.2026), сеть хостинга рвётся: повторяем
+# с нарастающей паузой, а кому не дошло — пробуем ещё раз в конце рассылки.
+SEND_RETRY_DELAYS_SEC = (10, 30, 60)
+MAX_RETRY_AFTER_SEC = 120
+SECOND_PASS_DELAY_SEC = 60
 
 
 @dataclass
@@ -50,6 +62,9 @@ class DigestStats:
     limited_roles: list[str] = field(default_factory=list)
     # Сколько подписчиков получили «новых вакансий нет».
     empty_notices: int = 0
+    # Кому подборка так и не дошла (и после второго прохода) и кто заблокировал бота.
+    failed_users: list[int] = field(default_factory=list)
+    blocked: int = 0
 
 
 class SubscriberService:
@@ -74,44 +89,72 @@ class SubscriberService:
             limited_roles=limited_roles,
         )
 
+        retry: list[dict] = []
         for row in subscribers:
-            user_id = int(row["user_id"])
-            role_ids = self._roles_of(row)
-            if not role_ids:
-                logger.warning("Подписчик %s без ролей — пропуск", user_id)
-                continue
+            if not await self._deliver(row, cache, failed_roles, limited_roles, stats):
+                retry.append(row)
 
-            try:
-                region = self.db.get_region(user_id)
-                vacancies, fresh = self._merge_for_roles(cache, role_ids, region)
-                logger.info(
-                    "Подписчик %s roles=%s region=%s: найдено=%s, свежих=%s",
-                    user_id,
-                    ",".join(role_ids),
-                    region,
-                    len(vacancies),
-                    len(fresh),
-                )
-                sent, empty_notice = await self._send_to_user(
-                    user_id,
-                    role_ids,
-                    fresh,
-                    len(vacancies),
-                    roles_complete=self._roles_complete(
-                        role_ids, cache, failed_roles, limited_roles
-                    ),
-                    region=region,
-                )
-                stats.messages += sent
-                stats.empty_notices += int(empty_notice)
-                await asyncio.sleep(0.05)
-            except TelegramForbiddenError:
-                logger.warning("Подписчик %s заблокировал бота — отписываем", user_id)
-                self.db.deactivate_subscriber(user_id, reason="blocked")
-            except Exception:
-                logger.exception("Ошибка рассылки подписчику %s", user_id)
+        if retry:
+            logger.warning("Не дошло %s подписчикам — второй проход через %s с", len(retry), SECOND_PASS_DELAY_SEC)
+            await asyncio.sleep(SECOND_PASS_DELAY_SEC)
+            for row in retry:
+                if not await self._deliver(row, cache, failed_roles, limited_roles, stats):
+                    stats.failed_users.append(int(row["user_id"]))
 
         return stats
+
+    async def _deliver(
+        self,
+        row: dict,
+        cache: dict[str, list[Vacancy]],
+        failed_roles: list[str],
+        limited_roles: list[str],
+        stats: DigestStats,
+    ) -> bool:
+        """Подборка одному подписчику. False — не дошло, стоит повторить."""
+        user_id = int(row["user_id"])
+        role_ids = self._roles_of(row)
+        if not role_ids:
+            logger.warning("Подписчик %s без ролей — пропуск", user_id)
+            return True
+
+        try:
+            region = self.db.get_region(user_id)
+            vacancies, fresh = self._merge_for_roles(cache, role_ids, region)
+            logger.info(
+                "Подписчик %s roles=%s region=%s: найдено=%s, свежих=%s",
+                user_id,
+                ",".join(role_ids),
+                region,
+                len(vacancies),
+                len(fresh),
+            )
+            sent, empty_notice = await self._send_to_user(
+                user_id,
+                role_ids,
+                fresh,
+                len(vacancies),
+                roles_complete=self._roles_complete(
+                    role_ids, cache, failed_roles, limited_roles
+                ),
+                region=region,
+            )
+            stats.messages += sent
+            stats.empty_notices += int(empty_notice)
+            await asyncio.sleep(0.05)
+        except TelegramForbiddenError:
+            logger.warning("Подписчик %s заблокировал бота — отписываем", user_id)
+            stats.blocked += 1
+            try:
+                self.db.deactivate_subscriber(user_id, reason="blocked")
+            except Exception:
+                # Раньше эта ошибка (например, «database is locked») обрывала
+                # рассылку всем, кто шёл дальше по списку.
+                logger.exception("Не удалось отписать %s", user_id)
+        except Exception:
+            logger.exception("Ошибка рассылки подписчику %s", user_id)
+            return False
+        return True
 
     async def preview_digests(self) -> None:
         """Проверка без отправки: что получит каждый подписчик."""
@@ -303,8 +346,13 @@ class SubscriberService:
         posted = {v.uid for v in to_post}
         overflow = [v for v in all_new if v.uid not in posted]
         today = self._today()
-        self.db.replace_digest_overflow(user_id, today, overflow)
-        more = more_keyboard(len(overflow), today) if overflow else None
+        try:
+            self.db.replace_digest_overflow(user_id, today, overflow)
+            more = more_keyboard(len(overflow), today) if overflow else None
+        except Exception:
+            # Без кнопки «Показать остальные» — но подборка всё равно уйдёт.
+            logger.exception("Не сохранил остаток подборки для %s", user_id)
+            more = None
 
         messages, included = format_subscriber_digest(
             role_label,
@@ -321,15 +369,20 @@ class SubscriberService:
             )
 
         delivered: Optional[Message] = None
+        pending = list(to_post)
         for index, message in enumerate(messages):
             is_last = index == len(messages) - 1
             markup = more if is_last else None
             delivered = await self._safe_send(user_id, message, markup) or delivered
+            # Отмечаем сразу после каждого сообщения: если второе не дойдёт или
+            # процесс оборвут, первое завтра не придёт повторно.
+            # После последнего сообщения дошло всё — в том числе блоки, которые
+            # пришлось обрезать и которых поэтому нет в тексте дословно.
+            in_message = pending if is_last else [v for v in pending if format_vacancy(v) in message]
+            pending = [v for v in pending if v not in in_message]
+            self.db.mark_sent_many(user_id, in_message)
             if len(messages) > 1:
                 await asyncio.sleep(0.4)
-
-        for vacancy in to_post:
-            self.db.mark_sent_to_subscriber(user_id, vacancy)
 
         self._remember_profile(user_id, delivered)
 
@@ -384,7 +437,8 @@ class SubscriberService:
     async def _safe_send(
         self, chat_id: int, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None
     ) -> Optional[Message]:
-        network_retries = 0
+        retries = 0
+        flood_waits = 0
         while True:
             try:
                 return await self.bot.send_message(
@@ -395,16 +449,17 @@ class SubscriberService:
                     reply_markup=reply_markup,
                 )
             except TelegramRetryAfter as exc:
-                await asyncio.sleep(exc.retry_after + 1)
-            except TelegramNetworkError as exc:
-                network_retries += 1
-                if network_retries > 3:
+                flood_waits += 1
+                if flood_waits > 5:
                     raise
-                wait = 10 * network_retries
+                await asyncio.sleep(min(exc.retry_after, MAX_RETRY_AFTER_SEC) + 1)
+            except (TelegramNetworkError, TelegramServerError, ClientDecodeError) as exc:
+                # ClientDecodeError — HTML-страница 502 от прокси Телеграма вместо JSON.
+                if retries >= len(SEND_RETRY_DELAYS_SEC):
+                    raise
+                wait = SEND_RETRY_DELAYS_SEC[retries]
+                retries += 1
                 logger.warning(
-                    "Сеть недоступна (%s), повтор через %s с: %s",
-                    network_retries,
-                    wait,
-                    exc,
+                    "Телеграм недоступен (%s), повтор через %s с: %r", retries, wait, exc
                 )
                 await asyncio.sleep(wait)

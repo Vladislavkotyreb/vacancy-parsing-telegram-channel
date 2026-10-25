@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -37,8 +38,8 @@ class SourceLimited(Exception):
     узнает, что роль собрана не целиком.
     """
 
-    def __init__(self, source: str, vacancies: list[Vacancy]) -> None:
-        super().__init__(f"{source}: доступ ограничен (HTTP 403)")
+    def __init__(self, source: str, vacancies: list[Vacancy], reason: str = "доступ ограничен (HTTP 403)") -> None:
+        super().__init__(f"{source}: {reason}")
         self.source = source
         self.vacancies = vacancies
 
@@ -65,6 +66,7 @@ async def collect_for_role(settings: Settings, role: Role) -> list[Vacancy]:
     # он подгружает скриптом, парсер их не видел, а вакансии Сбера и так
     # приходят с HH через поиск по работодателям.
     hours = settings.max_vacancy_age_hours
+    failed_sources: list[str] = []
     for source, vacancies in [
         ("hh.ru", hh_vacancies),
         ("career.habr.com", await _shared_feed("career.habr.com", lambda: _fetch_habr(hours))),
@@ -76,6 +78,9 @@ async def collect_for_role(settings: Settings, role: Role) -> list[Vacancy]:
         (world_remote.WWR, await _shared_feed(world_remote.WWR, _fetch_wwr)),
         (world_remote.JOBICY, await _shared_feed(world_remote.JOBICY, _fetch_jobicy)),
     ]:
+        if vacancies is None:  # площадка не ответила и после повтора
+            failed_sources.append(source)
+            vacancies = []
         matched = [vacancy for vacancy in vacancies if role.matcher(vacancy.title)]
         logger.info(
             "Подписчики [%s] %s: найдено %s, подошло %s",
@@ -88,23 +93,39 @@ async def collect_for_role(settings: Settings, role: Role) -> list[Vacancy]:
             results[vacancy.uid] = vacancy
 
     collected = dedupe_across_sources(list(results.values()))
+    # Неполный сбор — не провал: подписчики получат собранное, но «новых нет»
+    # им не напишем (вакансии могли быть), а админ увидит роль в отчёте.
     if hh_limited:
-        raise SourceLimited("hh.ru", collected)
+        raise SourceLimited("hh.ru", collected, hh_limited)
+    if failed_sources:
+        raise SourceLimited(", ".join(failed_sources), collected, "не ответили")
     return collected
 
 
-async def _side_source(name: str, fetch: Awaitable[list[Vacancy]]) -> list[Vacancy]:
-    """Сбой дополнительной площадки не валит роль: подписчик получит хотя бы HH."""
-    try:
-        return await fetch
-    except Exception as exc:
-        logger.warning("%s недоступен, собираем без него: %r", name, exc)
-        return []
+SIDE_SOURCE_RETRY_DELAY_SEC = 5
+
+
+async def _side_source(
+    name: str, fetch: Callable[[], Awaitable[list[Vacancy]]]
+) -> Optional[list[Vacancy]]:
+    """Сбой дополнительной площадки не валит роль: подписчик получит хотя бы HH.
+
+    Сеть хостинга рвётся на минуты — один повтор. None — площадка так и не
+    ответила: сбор роли неполный (раньше это тихо считалось «пусто»).
+    """
+    for attempt in range(2):
+        try:
+            return await fetch()
+        except Exception as exc:
+            logger.warning("%s недоступен (попытка %s): %r", name, attempt + 1, exc)
+            if attempt == 0:
+                await asyncio.sleep(SIDE_SOURCE_RETRY_DELAY_SEC)
+    return None
 
 
 async def _shared_feed(
     name: str, fetch: Callable[[], Awaitable[list[Vacancy]]]
-) -> list[Vacancy]:
+) -> Optional[list[Vacancy]]:
     """Лента площадки целиком; внутри shared_feeds — одна на прогон, вместе со сбоем.
 
     GeekJob и GetMatch маленькие: вся свежая лента — несколько страниц, а их
@@ -115,7 +136,7 @@ async def _shared_feed(
     feeds = _run_feeds.get()
     if feeds is not None and name in feeds:
         return feeds[name]
-    vacancies = await _side_source(name, fetch())
+    vacancies = await _side_source(name, fetch)
     if feeds is not None:
         feeds[name] = vacancies
     return vacancies
@@ -177,8 +198,8 @@ async def _fetch_getmatch() -> list[Vacancy]:
     return list(results.values())
 
 
-async def _fetch_hh(settings: Settings, role: Role) -> tuple[list[Vacancy], bool]:
-    """Вакансии с HH и признак, что HH ограничил запросы (ответил 403)."""
+async def _fetch_hh(settings: Settings, role: Role) -> tuple[list[Vacancy], str]:
+    """Вакансии с HH и причина неполноты ("" — собрано целиком)."""
     parser = HHParser(settings)
     vacancies = await parser.fetch_for_queries(
         role.hh_queries,
@@ -194,7 +215,13 @@ async def _fetch_hh(settings: Settings, role: Role) -> tuple[list[Vacancy], bool
     merged = {vacancy.uid: vacancy for vacancy in vacancies}
     for vacancy in bigtech:
         merged[vacancy.uid] = vacancy
-    return list(merged.values()), parser.forbidden_hit
+    if parser.forbidden_hit:
+        reason = "доступ ограничен (HTTP 403)"
+    elif parser.incomplete:
+        reason = "часть запросов не прошла (сеть или 5xx)"
+    else:
+        reason = ""
+    return list(merged.values()), reason
 
 
 async def _fetch_geekjob() -> list[Vacancy]:
