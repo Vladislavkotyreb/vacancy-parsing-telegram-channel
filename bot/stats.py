@@ -63,8 +63,7 @@ def format_admin_stats(
     lines = [
         f"📊 <b>Статистика {period_label}</b>",
         "",
-        *_audience_lines(audience),
-        f"• Пришли по ссылке из подборки: {came}, из них подписаны {came_subscribed}",
+        *_audience_lines(audience, f"• Пришли по ссылке из подборки: {came}, из них подписаны {came_subscribed}"),
         "",
         "<b>Подписчики</b>",
         f"• Активных: <b>{active}</b>",
@@ -118,7 +117,8 @@ def format_admin_stats(
     return "\n".join(lines)
 
 
-def _audience_lines(audience: dict) -> list[str]:
+def _audience_lines(audience: dict, *extra: str) -> list[str]:
+    """Строки «Аудитории»; extra — дополнительные пункты перед сноской."""
     dau, mau = audience["dau"], audience["mau"]
     stickiness = f"{round(dau / mau * 100)}%" if mau else "—"
 
@@ -134,6 +134,8 @@ def _audience_lines(audience: dict) -> list[str]:
         f" · за 30 дн. {audience['left_month']}"
         f" (из них заблокировали бота: {audience['blocked_month']})",
     ]
+
+    lines.extend(extra)
 
     since = audience["tracking_since"]
     if since:
