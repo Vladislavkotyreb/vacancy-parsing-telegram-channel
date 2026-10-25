@@ -17,6 +17,9 @@ class Vacancy:
     published_at: Optional[datetime] = None
     work_format: Optional[str] = None
     grade: Optional[str] = None
+    # Требуемый опыт HH (noExperience / between1And3 / …). Для фильтра по
+    # уровню: «1–3 года» — это и Junior, и Middle, а grade хранит одно из них.
+    experience: Optional[str] = None
 
     @property
     def uid(self) -> str:

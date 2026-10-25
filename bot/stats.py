@@ -58,10 +58,13 @@ def format_admin_stats(
     if active > 0:
         reach_pct = round(delivery["users_period"] / active * 100)
 
+    came, came_subscribed = db.came_from_stats("share", exclude_user_id=exclude_user_id)
+
     lines = [
         f"📊 <b>Статистика {period_label}</b>",
         "",
         *_audience_lines(audience),
+        f"• Пришли по ссылке из подборки: {came}, из них подписаны {came_subscribed}",
         "",
         "<b>Подписчики</b>",
         f"• Активных: <b>{active}</b>",

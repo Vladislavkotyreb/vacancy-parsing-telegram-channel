@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Iterator, Optional
@@ -16,6 +16,7 @@ from bot.cross_source import merge_key
 from bot.dates import dedupe_key
 from bot.models import Vacancy
 from bot.regions import DEFAULT_REGION, normalize_region
+from bot.grade_filter import normalize_levels
 
 
 class VacancyDatabase:
@@ -155,6 +156,14 @@ class VacancyDatabase:
                     updated_at TEXT NOT NULL
                 );
 
+                -- Уровни вакансий подписчика: junior / middle / senior / lead через
+                -- запятую (bot/grade_filter.py). Нет строки или пусто — все уровни.
+                CREATE TABLE IF NOT EXISTS user_grades (
+                    user_id INTEGER PRIMARY KEY,
+                    levels TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS digest_overflow (
                     user_id INTEGER NOT NULL,
                     digest_day TEXT NOT NULL,
@@ -178,6 +187,11 @@ class VacancyDatabase:
             # раза в день, даже если рассылку перезапускают после обрыва сети.
             if "last_empty_notice_on" not in subscriber_columns:
                 conn.execute("ALTER TABLE subscribers ADD COLUMN last_empty_notice_on TEXT")
+
+            user_columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+            # Откуда пришёл человек: метка из ссылки t.me/<бот>?start=<метка>.
+            if "came_from" not in user_columns:
+                conn.execute("ALTER TABLE users ADD COLUMN came_from TEXT")
 
             sent_columns = {
                 row["name"] for row in conn.execute("PRAGMA table_info(subscriber_sent)")
@@ -775,6 +789,54 @@ class VacancyDatabase:
                 (user_id, normalize_region(region), now),
             )
 
+    def get_grades(self, user_id: int) -> list[str]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT levels FROM user_grades WHERE user_id = ?", (user_id,)
+            ).fetchone()
+        return normalize_levels(row["levels"].split(",")) if row else []
+
+    def set_grades(self, user_id: int, levels: list[str]) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO user_grades (user_id, levels, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET levels = excluded.levels,
+                                                   updated_at = excluded.updated_at
+                """,
+                (user_id, ",".join(normalize_levels(levels)), now),
+            )
+
+    def remember_came_from(self, user_id: int, source: str) -> None:
+        """Метку ставим один раз и только тем, кто ещё ни разу не подписывался:
+        старый подписчик, открывший чужую ссылку, — не новый человек."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE users SET came_from = ?
+                WHERE user_id = ? AND came_from IS NULL
+                  AND user_id NOT IN (SELECT user_id FROM subscribers)
+                """,
+                (source, user_id),
+            )
+
+    def came_from_stats(self, source: str, exclude_user_id: Optional[int] = None) -> tuple[int, int]:
+        """(сколько пришло по метке, сколько из них сейчас подписаны)."""
+        excluded = exclude_user_id if exclude_user_id is not None else -1
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS came,
+                       COALESCE(SUM(CASE WHEN s.active = 1 THEN 1 ELSE 0 END), 0) AS subscribed
+                FROM users u
+                LEFT JOIN subscribers s ON s.user_id = u.user_id
+                WHERE u.came_from = ? AND u.user_id != ?
+                """,
+                (source, excluded),
+            ).fetchone()
+        return int(row["came"]), int(row["subscribed"])
+
     def replace_digest_overflow(self, user_id: int, day: str, vacancies: list[Vacancy]) -> None:
         """Остаток подборки вместо прежнего; пустой список — просто стереть прежний."""
         with self._connect() as conn:
@@ -976,4 +1038,7 @@ def _vacancy_from_json(raw: str) -> Vacancy:
     data = json.loads(raw)
     if data.get("published_at"):
         data["published_at"] = datetime.fromisoformat(data["published_at"])
-    return Vacancy(**data)
+    # Поля, которых нет в этой версии Vacancy, пропускаем: остаток подборки
+    # мог записать более новый код (а читать — откаченный).
+    known = {f.name for f in fields(Vacancy)}
+    return Vacancy(**{key: value for key, value in data.items() if key in known})

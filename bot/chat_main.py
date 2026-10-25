@@ -42,10 +42,12 @@ from bot.digest_more import (
     send_overflow,
     user_lock,
 )
+from bot.grade_filter import LEVEL_LABELS, LEVELS, levels_phrase, normalize_levels
 from bot.role_categories import CATEGORIES, CATEGORY_IDS, get_category
 from bot.regions import REGION_BUTTONS, normalize_region, region_phrase
 from bot.roles import ROLES
 from bot.russian import format_subscription_roles, format_success_roles
+from bot.subscriber_formatters import SHARE_START
 from bot.stats import (
     USERS_PAGE_SIZE,
     format_admin_stats,
@@ -66,6 +68,11 @@ S0_REGION = "s0:reg:"  # s0:reg:<cis|world|both>
 S1_CAT = "s1:cat:"
 S2_ROLE = "s2:role:"  # s2:role:<category_id>:<role_id>
 S2_SAVE = "s2:save:"  # s2:save:<category_id>
+# Уровень вакансий: открыть выбор, переключить уровень, сохранить. Выбор, как и
+# роли, живёт в самой клавиатуре — перезапуск бота его не сбрасывает.
+G_OPEN = "g:open"
+G_TOGGLE = "g:t:"  # g:t:<junior|middle|senior|lead>
+G_SAVE = "g:save"
 S2_BACK = "s2:back"
 ADMIN_USERS_PAGE = "adm:users:"  # adm:users:<page>
 PROFILE_FETCH_CONCURRENCY = 5
@@ -194,6 +201,51 @@ def _draft_from_keyboard(markup: Optional[InlineKeyboardMarkup]) -> set[str]:
             if role_id:
                 draft.add(role_id)
     return draft
+
+
+def level_keyboard(selected: set[str]) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"{MARK if level in selected else ''}{LEVEL_LABELS[level]}",
+                callback_data=f"{G_TOGGLE}{level}",
+            )
+        ]
+        for level in LEVELS
+    ]
+    rows.append([InlineKeyboardButton(text="Сохранить", callback_data=G_SAVE)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _levels_from_keyboard(markup: Optional[InlineKeyboardMarkup]) -> set[str]:
+    selected: set[str] = set()
+    if not markup:
+        return selected
+    for row in markup.inline_keyboard:
+        for button in row:
+            data = button.callback_data or ""
+            if data.startswith(G_TOGGLE) and button.text.startswith(MARK):
+                selected.add(data[len(G_TOGGLE):])
+    return selected
+
+
+def _level_step_text() -> str:
+    return "\n".join(
+        [
+            "<b>Уровень вакансий</b>",
+            "Отметь нужные и нажми «Сохранить». Ничего не отмечено — присылаю все уровни.",
+            "",
+            "<i>Вакансии, где уровень не указан, приходят всегда: часть площадок его не пишет.</i>",
+        ]
+    )
+
+
+def change_level_keyboard(levels: list[str]) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"Уровень: {levels_phrase(levels)} · изменить", callback_data=G_OPEN)]
+        ]
+    )
 
 
 def main_menu_keyboard(subscribed: bool = False) -> ReplyKeyboardMarkup:
@@ -368,7 +420,8 @@ async def send_subscription_info(message: Message, db: VacancyDatabase) -> None:
     await message.answer(
         f"Текущая подписка: <b>{roles_text}</b>\n"
         f"Где ищу: <b>{region}</b>\n"
-        f"Изменить — «{BTN_CHOOSE_ROLES_AGAIN}»\n"
+        f"Уровень: <b>{levels_phrase(db.get_grades(message.from_user.id))}</b> — изменить: /level\n"
+        f"Изменить роли — «{BTN_CHOOSE_ROLES_AGAIN}»\n"
         "Отписаться — «Прекратить рассылку»",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(subscribed=True),
@@ -396,6 +449,12 @@ async def unsubscribe_user(message: Message, db: VacancyDatabase) -> None:
 
 @router.message(Command("start"))
 async def cmd_start(message: Message, db: VacancyDatabase) -> None:
+    payload = (message.text or "").partition(" ")[2].strip()
+    if payload == SHARE_START and message.from_user:
+        try:
+            db.remember_came_from(message.from_user.id, SHARE_START)
+        except Exception:
+            logger.exception("Не удалось записать, откуда пришёл %s", message.from_user.id)
     subscribed = _is_subscribed(message.from_user.id, db) if message.from_user else False
     await send_welcome(message, subscribed)
     await start_flow(message, db)
@@ -424,6 +483,51 @@ async def cmd_stop(message: Message, db: VacancyDatabase) -> None:
 @router.message(Command("myrole"))
 async def cmd_myrole(message: Message, db: VacancyDatabase) -> None:
     await send_subscription_info(message, db)
+
+
+@router.message(Command("level"))
+async def cmd_level(message: Message, db: VacancyDatabase) -> None:
+    if not message.from_user:
+        return
+    current = set(db.get_grades(message.from_user.id))
+    await message.answer(_level_step_text(), parse_mode="HTML", reply_markup=level_keyboard(current))
+
+
+@router.callback_query(F.data == G_OPEN)
+async def g_open(callback: CallbackQuery, db: VacancyDatabase) -> None:
+    if not callback.from_user or not callback.message:
+        return
+    await callback.answer()
+    current = set(db.get_grades(callback.from_user.id))
+    await callback.message.answer(_level_step_text(), parse_mode="HTML", reply_markup=level_keyboard(current))
+
+
+@router.callback_query(F.data.startswith(G_TOGGLE))
+async def g_toggle(callback: CallbackQuery) -> None:
+    if not callback.data or not callback.message:
+        return
+    level = callback.data[len(G_TOGGLE):]
+    if level not in LEVELS:
+        await callback.answer("Неизвестный уровень", show_alert=True)
+        return
+    selected = _levels_from_keyboard(callback.message.reply_markup)
+    selected ^= {level}
+    await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=level_keyboard(selected))
+
+
+@router.callback_query(F.data == G_SAVE)
+async def g_save(callback: CallbackQuery, db: VacancyDatabase) -> None:
+    if not callback.from_user or not callback.message:
+        return
+    levels = normalize_levels(_levels_from_keyboard(callback.message.reply_markup))
+    db.set_grades(callback.from_user.id, levels)
+    await callback.answer("Сохранено")
+    await callback.message.edit_text(
+        f"✅ Уровень: <b>{levels_phrase(levels)}</b>. Применится с завтрашней подборки.\n"
+        "Изменить — /level",
+        parse_mode="HTML",
+    )
 
 
 @router.message(Command("stats"))
@@ -550,6 +654,7 @@ async def s2_save(callback: CallbackQuery, db: VacancyDatabase) -> None:
         f"<b>{roles_text}</b> {region}.\n\n"
         "Чтобы изменить другое направление — «Выбрать роли заново».",
         parse_mode="HTML",
+        reply_markup=change_level_keyboard(db.get_grades(callback.from_user.id)),
     )
     await callback.message.answer(
         "Меню 👇",

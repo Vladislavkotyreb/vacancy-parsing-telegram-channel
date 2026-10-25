@@ -6,6 +6,7 @@ from bot.models import Vacancy
 from bot.regions import CIS, DEFAULT_REGION, WORLD, normalize_region
 from bot.roles import get_role
 from bot.formatters import (
+    TELEGRAM_MAX_LENGTH,
     build_paginated_digest,
     escape_html,
 )
@@ -23,6 +24,15 @@ WORLD_SOURCE_LABELS = {
     "weworkremotely.com": "We Work Remotely",
     "jobicy.com": "Jobicy",
 }
+
+
+# Метка в ссылке t.me/<бот>?start=share: так /stats видит, сколько людей
+# пришло по пересланной подборке. Ссылка в тексте переживает и пересылку, и копирование.
+SHARE_START = "share"
+
+
+def _share_footer(share_url: str) -> str:
+    return f'\n\n👥 Коллегам тоже пригодится: <a href="{escape_html(share_url)}">подписаться на подборку</a>'
 
 
 def _sources_line(region: str) -> str:
@@ -60,17 +70,24 @@ def format_subscriber_digest(
     max_age_hours: int = 72,
     total_new: Optional[int] = None,
     region: str = DEFAULT_REGION,
+    share_url: Optional[str] = None,
 ) -> tuple[list[str], int]:
     if not new_vacancies:
         return [], 0
 
-    return build_paginated_digest(
+    messages, included = build_paginated_digest(
         format_subscriber_header(
             role_label, len(new_vacancies), total_found, max_age_hours, total_new, region
         ),
         new_vacancies,
         channel_footer=False,
     )
+    if share_url:
+        footer = _share_footer(share_url)
+        # Не влезает в последнее сообщение — без строки: она не стоит лишнего сообщения.
+        if len(messages[-1]) + len(footer) <= TELEGRAM_MAX_LENGTH:
+            messages[-1] += footer
+    return messages, included
 
 
 def format_empty_notice(role_ids: list[str]) -> str:
