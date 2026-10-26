@@ -342,3 +342,52 @@ class CallbackRobustnessTest(FlowSimulationTest):
             await StaleCallbackMiddleware()(handler, event, {})
         handler.assert_not_awaited()
         answered.assert_awaited()
+
+
+class UnsubscribeConfirmTest(FlowSimulationTest):
+    """Отписка — только после подтверждения (просьба подписчика 26.10.2026)."""
+
+    async def test_stop_asks_before_unsubscribing(self):
+        from bot.chat_main import UNSUB_NO, UNSUB_YES, unsubscribe_user
+
+        self.db.set_subscriber_roles(self.user_id, ["backend_go"])
+        msg = SimpleNamespace(from_user=SimpleNamespace(id=self.user_id), answer=AsyncMock())
+        await unsubscribe_user(msg, self.db)
+        self.assertEqual(self.db.get_subscriber_roles(self.user_id), ["backend_go"], "ещё подписан")
+        text = msg.answer.await_args.args[0]
+        self.assertIn("Точно отписаться?", text)
+        markup = msg.answer.await_args.kwargs["reply_markup"]
+        self.assertEqual(_callback_data(markup), [UNSUB_YES, UNSUB_NO])
+
+    async def test_yes_unsubscribes(self):
+        from bot.chat_main import UNSUB_YES, unsub_yes
+
+        self.db.set_subscriber_roles(self.user_id, ["backend_go"])
+        await unsub_yes(self._cb(UNSUB_YES), self.db)
+        self.assertEqual(self.db.list_active_subscribers(), [])
+        self.assertIn("Рассылка остановлена", self.edited_texts[-1])
+
+    async def test_no_keeps_subscription(self):
+        from bot.chat_main import UNSUB_NO, unsub_no
+
+        self.db.set_subscriber_roles(self.user_id, ["backend_go"])
+        await unsub_no(self._cb(UNSUB_NO), self.db)
+        self.assertEqual(self.db.get_subscriber_roles(self.user_id), ["backend_go"])
+        self.assertIn("Подписка осталась", self.edited_texts[-1])
+
+    async def test_not_subscribed_gets_no_question(self):
+        from bot.chat_main import unsubscribe_user
+
+        msg = SimpleNamespace(from_user=SimpleNamespace(id=self.user_id), answer=AsyncMock())
+        await unsubscribe_user(msg, self.db)
+        self.assertIn("не подписан", msg.answer.await_args.args[0])
+
+    async def test_buttons_are_not_caught_as_stale(self):
+        """Новые кнопки должны доходить до своих обработчиков, а не до «кнопка устарела»."""
+        from aiogram import Dispatcher
+
+        from bot.chat_main import UNSUB_NO, UNSUB_YES, router
+
+        handlers = [h.callback.__name__ for h in router.callback_query.handlers]
+        self.assertLess(handlers.index("unsub_yes"), handlers.index("stale_button"))
+        self.assertLess(handlers.index("unsub_no"), handlers.index("stale_button"))

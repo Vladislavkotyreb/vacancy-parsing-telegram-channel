@@ -69,6 +69,9 @@ S2_ROLE = "s2:role:"  # s2:role:<category_id>:<role_id>
 S2_SAVE = "s2:save:"  # s2:save:<category_id>
 S2_BACK = "s2:back"
 ADMIN_USERS_PAGE = "adm:users:"  # adm:users:<page>
+# Подтверждение отписки: случайное нажатие «Прекратить рассылку» отписывало сразу.
+UNSUB_YES = "u:yes"
+UNSUB_NO = "u:no"
 PROFILE_FETCH_CONCURRENCY = 5
 PROFILE_FETCH_TIMEOUT_SEC = 5
 # Паузы между попытками достучаться до Телеграма на старте (~3 минуты в сумме).
@@ -429,23 +432,54 @@ async def send_subscription_info(message: Message, db: VacancyDatabase) -> None:
     )
 
 
+def unsubscribe_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Да, отписаться", callback_data=UNSUB_YES)],
+            [InlineKeyboardButton(text="Нет, оставить", callback_data=UNSUB_NO)],
+        ]
+    )
+
+
 async def unsubscribe_user(message: Message, db: VacancyDatabase) -> None:
+    """Сначала спрашиваем: отписка — только по «Да, отписаться»."""
     if not message.from_user:
         return
 
-    subscriber = db.get_subscriber(message.from_user.id)
-    if not subscriber:
+    if not _is_subscribed(message.from_user.id, db):
         await message.answer(
             "Ты не подписан на рассылку.",
             reply_markup=main_menu_keyboard(subscribed=False),
         )
         return
 
-    db.deactivate_subscriber(message.from_user.id)
+    roles_text = format_subscription_roles(db.get_subscriber_roles(message.from_user.id))
     await message.answer(
-        f"Рассылка остановлена.\nЧтобы вернуться — «{BTN_CHOOSE_ROLES}».",
-        reply_markup=main_menu_keyboard(subscribed=False),
+        f"Точно отписаться? Перестану присылать <b>{roles_text}</b>.",
+        parse_mode="HTML",
+        reply_markup=unsubscribe_confirm_keyboard(),
     )
+
+
+@router.callback_query(F.data == UNSUB_YES)
+async def unsub_yes(callback: CallbackQuery, db: VacancyDatabase) -> None:
+    if not callback.from_user or not callback.message:
+        return
+    await _answer(callback)
+    if _is_subscribed(callback.from_user.id, db):
+        db.deactivate_subscriber(callback.from_user.id)
+    await callback.message.edit_text(
+        f"Рассылка остановлена.\nЧтобы вернуться — «{BTN_CHOOSE_ROLES}».",
+    )
+    await callback.message.answer("Меню 👇", reply_markup=main_menu_keyboard(subscribed=False))
+
+
+@router.callback_query(F.data == UNSUB_NO)
+async def unsub_no(callback: CallbackQuery, db: VacancyDatabase) -> None:
+    if not callback.from_user or not callback.message:
+        return
+    await _answer(callback, "Подписка осталась")
+    await callback.message.edit_text("👍 Подписка осталась — завтра в\u00a010:00 пришлю новые вакансии.")
 
 
 @router.message(Command("start"))
