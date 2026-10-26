@@ -267,7 +267,8 @@ def is_csharp_developer_vacancy(title: str) -> bool:
 # разработчиков с пометкой «проектная работа».
 IT_PM_INCLUDE = [
     re.compile(r"project\s*manager|проджект[\s-]*менеджер", re.I),
-    re.compile(r"(?:менеджер|руководител\w*)\s+(?:\w+[\s-]+)?(?:it[\s-]+|ит[\s-]+)?проект(?:а|ов)\b", re.I),
+    # До двух слов между: «Менеджер IT/Saas проектов», «Руководитель кросс-блочного проекта».
+    re.compile(r"(?:менеджер|руководител\w*)\s+(?:[\w/]+[\s-]+){0,2}проект(?:а|ов)\b", re.I),
     re.compile(r"менеджер\s+по\s+проектам", re.I),
     re.compile(r"delivery\s*manager|program\s*manager|technical\s+project\s+lead", re.I),
 ]

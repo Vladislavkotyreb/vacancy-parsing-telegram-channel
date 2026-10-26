@@ -882,6 +882,7 @@ class ITProjectManagerTest(unittest.TestCase):
             "Старший руководитель ИТ-проектов", "Delivery Manager", "TECHNICAL PROGRAM MANAGER",
             "Руководитель проектов внедрения (Technical Project Lead)",
             "IT Project manager / Менеджер проектов (Внутренний контроль и аналитика)",
+            "Менеджер IT/Saas проектов", "Project Manager / Менеджер IT‑проектов", "Руководитель проекта IT",
         ):
             self.assertTrue(is_it_project_manager_vacancy(title), title)
 
@@ -892,6 +893,7 @@ class ITProjectManagerTest(unittest.TestCase):
             "Healthcare Project Manager", "Руководитель проекта по кредитному риску контрагента",
             "Руководитель проектов строительства", "Менеджер проектов по монтажу", "Event project manager",
             "Java разработчик / Проектная работа / АУТСТАФФ", "Системный аналитик / Проектная работа",
+            "Менеджер по продажам IT-проектов", "Менеджер по подбору персонала / Рекрутер в онлайн-проект (IT/Digital Marketing)",
             "Юрист договорного отдела (коммерческие проекты)", "Экономист в AI-проект",
         ):
             self.assertFalse(is_it_project_manager_vacancy(title), title)
