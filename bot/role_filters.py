@@ -259,6 +259,33 @@ def is_csharp_developer_vacancy(title: str) -> bool:
     return _matches(title, CSHARP_INCLUDE, CSHARP_EXCLUDE)
 
 
+# --- IT Project Manager (26.10.2026) ---
+# Роль «Project Manager» уже была и снята: на HH под этим названием стройка,
+# ивенты и продажи. Теперь HH опрашивается только IT-формулировками (см. роль),
+# а Хабр, GetMatch и GeekJob — площадки только про IT. Фильтр отсекает то,
+# что проскакивает и там: проектные продажи, аналитиков, юристов, экономистов,
+# разработчиков с пометкой «проектная работа».
+IT_PM_INCLUDE = [
+    re.compile(r"project\s*manager|проджект[\s-]*менеджер", re.I),
+    re.compile(r"(?:менеджер|руководител\w*)\s+(?:\w+[\s-]+)?(?:it[\s-]+|ит[\s-]+)?проект(?:а|ов)\b", re.I),
+    re.compile(r"менеджер\s+по\s+проектам", re.I),
+    re.compile(r"delivery\s*manager|program\s*manager|technical\s+project\s+lead", re.I),
+]
+IT_PM_EXCLUDE = [
+    re.compile(r"product\s*(?:manager|owner)|продукт\w*\s+менедж|менеджер\s+продукт", re.I),
+    re.compile(r"\bаналитик\b|analyst", re.I),  # «аналитика» в описании направления — не аналитик
+    re.compile(r"продаж|sales|по\s+развитию|account", re.I),
+    re.compile(r"юрист|юрисконсульт|экономист|бухгалт|обучени", re.I),
+    re.compile(r"строител|строй|монтаж|проектировщ|ремонт|недвижим|девелопмент|ивент|event|мероприят", re.I),
+    re.compile(r"healthcare|cost\s+segregation|кредитн\w*\s+риск", re.I),
+    re.compile(r"дизайн|designer|разработчик|developer|программист|engineer\b|инженер", re.I),
+]
+
+
+def is_it_project_manager_vacancy(title: str) -> bool:
+    return _matches(title, IT_PM_INCLUDE, IT_PM_EXCLUDE)
+
+
 # --- DevOps / SRE (25.10.2026) ---
 # Платформенные инженеры — только без языка в названии: «Go Platform Engineer»
 # пишет на Go и уходит в Backend. Чистый MLOps — роль ML-инженера, сисадмины —

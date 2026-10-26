@@ -25,6 +25,7 @@ from bot.role_filters import (
     is_php_developer_vacancy,
     is_csharp_developer_vacancy,
     is_devops_vacancy,
+    is_it_project_manager_vacancy,
     is_fullstack_vacancy,
     is_flutter_developer_vacancy,
     is_ios_developer_vacancy,
@@ -229,6 +230,23 @@ ROLES: dict[str, Role] = {
         hh_queries=("product owner", "продакт оунер", "владелец продукта"),
         matcher=is_product_owner_vacancy,
         hh_professional_roles=(73,),
+    ),
+    "it_project_manager": Role(
+        id="it_project_manager",
+        label="IT-проджект-менеджера",
+        button_label="IT Project Manager",
+        # Только IT-формулировки: голое «project manager» на HH — стройка и ивенты.
+        hh_queries=(
+            "it project manager",
+            "it проджект менеджер",
+            "руководитель it проектов",
+            "руководитель ит проектов",
+            "менеджер it проектов",
+            "менеджер ит проектов",
+            "delivery manager",
+            "technical project manager",
+        ),
+        matcher=is_it_project_manager_vacancy,
     ),
     "qa_manual": Role(
         id="qa_manual",

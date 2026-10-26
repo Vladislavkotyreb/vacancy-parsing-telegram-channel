@@ -867,3 +867,46 @@ class DevOpsTest(unittest.TestCase):
             for role_id in ROLES:
                 if role_id not in ("devops", "ml_engineer"):
                     self.assertFalse(ROLES[role_id].matcher(title), (role_id, title))
+
+
+# --- IT Project Manager (26.10.2026). Заголовки — из живых лент Хабра, GetMatch, GeekJob, мира. ---
+from bot.role_filters import is_it_project_manager_vacancy  # noqa: E402
+
+
+class ITProjectManagerTest(unittest.TestCase):
+    def test_pm_titles(self):
+        for title in (
+            "IT Project Manager", "IT-Project manager", "Project Manager", "Middle / Middle+ Project Manager",
+            "Senior Project Manager, Мобильное направление", "Менеджер проектов", "Менеджер по проектам",
+            "Менеджер IT проекта в WB Книги", "Руководитель ИТ-проектов (ИИ/ML)", "Руководитель проекта IT (B2G)",
+            "Старший руководитель ИТ-проектов", "Delivery Manager", "TECHNICAL PROGRAM MANAGER",
+            "Руководитель проектов внедрения (Technical Project Lead)",
+            "IT Project manager / Менеджер проектов (Внутренний контроль и аналитика)",
+        ):
+            self.assertTrue(is_it_project_manager_vacancy(title), title)
+
+    def test_not_pm(self):
+        for title in (
+            "Product Manager", "Менеджер продукта", "Project Manager / Business Analyst",
+            "Менеджер проектных продаж IT", "Руководитель проекта по профессиональному обучению",
+            "Healthcare Project Manager", "Руководитель проекта по кредитному риску контрагента",
+            "Руководитель проектов строительства", "Менеджер проектов по монтажу", "Event project manager",
+            "Java разработчик / Проектная работа / АУТСТАФФ", "Системный аналитик / Проектная работа",
+            "Юрист договорного отдела (коммерческие проекты)", "Экономист в AI-проект",
+        ):
+            self.assertFalse(is_it_project_manager_vacancy(title), title)
+
+    def test_role_is_in_product_menu(self):
+        self.assertIn("it_project_manager", get_category("product").role_ids)
+        self.assertEqual(ROLES["it_project_manager"].button_label, "IT Project Manager")
+        self.assertLessEqual(len("s2:role:product:it_project_manager".encode()), 64)
+
+    def test_hh_queries_are_it_specific(self):
+        """Голое «project manager» на HH приносит стройку и ивенты — его быть не должно."""
+        self.assertNotIn("project manager", ROLES["it_project_manager"].hh_queries)
+        self.assertNotIn("менеджер проектов", ROLES["it_project_manager"].hh_queries)
+
+    def test_product_roles_unchanged(self):
+        for title in ("IT Project Manager", "Руководитель ИТ-проектов"):
+            self.assertFalse(ROLES["product_manager"].matcher(title), title)
+            self.assertFalse(ROLES["product_owner"].matcher(title), title)

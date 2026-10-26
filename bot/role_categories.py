@@ -50,7 +50,7 @@ CATEGORIES: dict[str, RoleCategory] = {
     "product": RoleCategory(
         id="product",
         title="Продукт",
-        role_ids=("product_manager", "product_owner"),
+        role_ids=("product_manager", "product_owner", "it_project_manager"),
     ),
     "qa": RoleCategory(
         id="qa",
