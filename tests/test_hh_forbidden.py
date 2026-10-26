@@ -244,3 +244,75 @@ class HHBreakerTest(unittest.IsolatedAsyncioTestCase):
                                             max_pages=1, forbidden=False)
         self.assertEqual(hh._breaker["failures"], 0)
         self.assertFalse(hh._hh_paused())
+
+
+class _RecordingSession:
+    """Запоминает параметры запросов и отдаёт заданное число страниц."""
+
+    def __init__(self, pages: int = 1) -> None:
+        self.pages = pages
+        self.calls: list[list] = []
+
+    def get(self, url, params=None, timeout=None):
+        self.calls.append(list(params or []))
+        pages = self.pages
+
+        class _Page(_Response):
+            async def json(self_inner):
+                return {"items": [{"id": "1"}], "pages": pages}
+
+        return _Page(200)
+
+
+class CombinedQueriesTest(unittest.IsolatedAsyncioTestCase):
+    """Сбор для подписчиков: все страны и компании одним запросом (26.10.2026)."""
+
+    async def asyncSetUp(self) -> None:
+        sleep = mock.patch("bot.parsers.hh.asyncio.sleep", new=AsyncMock())
+        sleep.start()
+        self.addCleanup(sleep.stop)
+
+    async def _run(self, coro_factory, pages=1):
+        session = _RecordingSession(pages)
+
+        class _Ctx:
+            async def __aenter__(self_inner):
+                return session
+
+            async def __aexit__(self_inner, *exc):
+                return False
+
+        with mock.patch("bot.parsers.hh.aiohttp.ClientSession", return_value=_Ctx()), \
+             mock.patch.object(HHParser, "_parse_item", return_value=None):
+            await coro_factory(HHParser(_settings()))
+        return session
+
+    async def test_one_request_per_phrase_with_all_areas(self):
+        from bot.config import HH_AREAS
+        session = await self._run(lambda p: p.fetch_for_queries(("python", "django"), lambda t: True))
+        self.assertEqual(len(session.calls), 2)
+        areas = [v for k, v in session.calls[0] if k == "area"]
+        self.assertEqual(areas, [str(a) for a in HH_AREAS])
+
+    async def test_old_mode_still_available(self):
+        from bot.config import HH_AREAS
+        session = await self._run(lambda p: p.fetch_for_queries(("python",), lambda t: True, combined=False))
+        self.assertEqual(len(session.calls), len(HH_AREAS))
+
+    async def test_bigtech_one_request_per_phrase_with_all_employers(self):
+        session = await self._run(lambda p: p.fetch_bigtech(lambda t: True, ("python",)))
+        self.assertEqual(len(session.calls), 1)
+        employers = [v for k, v in session.calls[0] if k == "employer_id"]
+        self.assertEqual(employers, [str(e) for _, e in BIGTECH_HH_EMPLOYERS])
+
+    async def test_reads_up_to_20_pages(self):
+        session = await self._run(lambda p: p.fetch_for_queries(("python",), lambda t: True), pages=50)
+        self.assertEqual(len(session.calls), 20)
+        self.assertEqual([v for k, v in session.calls[-1] if k == "page"], ["19"])
+
+    async def test_channel_fetch_unchanged(self):
+        from bot.config import HH_AREAS, SEARCH_QUERIES
+        session = await self._run(lambda p: p.fetch())
+        main_search = [c for c in session.calls if ("search_field", "name") in c]
+        self.assertEqual(len(main_search), len(HH_AREAS) * len(SEARCH_QUERIES))
+        self.assertTrue(all(sum(k == "area" for k, _ in c) == 1 for c in main_search))
