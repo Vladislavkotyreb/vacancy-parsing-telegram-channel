@@ -30,6 +30,14 @@ HH_REQUEST_DELAY_SEC = 0.2
 HH_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=20)
 HH_RETRY_DELAYS_SEC = (2, 5)  # повторы после первой неудачи
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
+# Сбор для подписчиков: все страны и все компании бигтеха — одним запросом
+# (HH принимает повторяющиеся area и employer_id). Было: фраза × 10 стран +
+# фраза × 11 компаний, ~3300 запросов и ~30 минут на рассылку (26.10.2026).
+# Страниц больше, чтобы общий запрос не упирался в 300 результатов.
+# False — прежний способ, по стране и компании отдельно.
+HH_COMBINED_QUERIES = True
+COMBINED_MAX_PAGES = 10
+COMBINED_BIGTECH_MAX_PAGES = 5
 # Предохранитель: HH лежит — не тратим по минуте на каждую страницу каждой
 # роли (без него сбор растягивался на часы). После N неудач подряд HH не
 # опрашиваем HH_PAUSE_SEC, роли собираются из остальных площадок как неполные.
@@ -118,13 +126,18 @@ class HHParser(BaseParser):
         *,
         max_pages: int = 3,
         professional_roles: tuple[int, ...] = (),
+        combined: Optional[bool] = None,
     ) -> list[Vacancy]:
         results: dict[str, Vacancy] = {}
         forbidden = False
         period = self._period_days()
+        combined = HH_COMBINED_QUERIES if combined is None else combined
+        # Все страны одним запросом — один «проход» по списку областей.
+        areas: list[Any] = [list(HH_AREAS)] if combined else list(HH_AREAS)
+        pages = COMBINED_MAX_PAGES if combined else max_pages
 
         async with aiohttp.ClientSession(headers=self._headers()) as session:
-            for area in HH_AREAS:
+            for area in areas:
                 for query in queries:
                     params: dict[str, Any] = {
                         "text": query,
@@ -144,7 +157,7 @@ class HHParser(BaseParser):
                         results,
                         params,
                         matcher=matcher,
-                        max_pages=max_pages,
+                        max_pages=pages,
                         forbidden=forbidden,
                     )
                     if forbidden:
@@ -206,13 +219,49 @@ class HHParser(BaseParser):
         matcher: Callable[[str], bool],
         queries: tuple[str, ...] | None = None,
         professional_roles: tuple[int, ...] = (),
+        combined: Optional[bool] = None,
     ) -> list[Vacancy]:
         results: dict[str, Vacancy] = {}
+        combined = HH_COMBINED_QUERIES if combined is None else combined
         async with aiohttp.ClientSession(headers=self._headers()) as session:
-            await self._fetch_bigtech_employers(
-                session, results, matcher, queries, professional_roles, stop_on_forbidden=True
-            )
+            if combined:
+                await self._fetch_bigtech_combined(
+                    session, results, matcher, queries or tuple(BIGTECH_SEARCH_QUERIES), professional_roles
+                )
+            else:
+                await self._fetch_bigtech_employers(
+                    session, results, matcher, queries, professional_roles, stop_on_forbidden=True
+                )
         return list(results.values())
+
+    async def _fetch_bigtech_combined(
+        self,
+        session: aiohttp.ClientSession,
+        results: dict[str, Vacancy],
+        matcher: Callable[[str], bool],
+        queries: tuple[str, ...],
+        professional_roles: tuple[int, ...],
+    ) -> None:
+        """Все компании бигтеха одним запросом на фразу (только сбор для подписчиков)."""
+        employer_ids = [employer_id for _, employer_id in BIGTECH_HH_EMPLOYERS]
+        before = len(results)
+        for query in queries:
+            params: dict[str, Any] = {
+                "employer_id": employer_ids,
+                "text": query,
+                "per_page": 100,
+                "order_by": "publication_time",
+                "period": self._period_days(),
+            }
+            if professional_roles:
+                params["professional_role"] = professional_roles
+            if await self._search(
+                session, results, params, matcher=matcher,
+                max_pages=COMBINED_BIGTECH_MAX_PAGES, forbidden=False,
+            ):
+                break  # 403 — дальше будут те же отказы
+        if len(results) > before:
+            logger.info("HH.ru bigtech employers: +%s вакансий", len(results) - before)
 
     async def _search(
         self,
