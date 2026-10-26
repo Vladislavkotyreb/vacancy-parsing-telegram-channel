@@ -83,7 +83,8 @@ class DigestBehaviourTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(stats.empty_notices, 1)
         text = self.texts()[0]
-        self.assertIn("Новых вакансий руководителя дизайна нет", text)
+        self.assertIn("Новых вакансий руководителя дизайна сегодня нет", text)
+        self.assertIn("За 3 дня новых не появилось", text)
         self.assertIn("проверю снова", text)
         self.assertNotIn("Найдено всего", text)
 
@@ -92,7 +93,7 @@ class DigestBehaviourTest(unittest.IsolatedAsyncioTestCase):
         self.db.set_subscriber_roles(20, ["head_of_design", "qa_manual"])
         await self.run_digest()
         text = self.texts()[0]
-        self.assertIn("Новых вакансий по выбранным ролям нет", text)
+        self.assertIn("Новых вакансий по выбранным ролям сегодня нет", text)
         self.assertNotIn("(", text)
 
     async def test_empty_notice_again_next_day(self):
@@ -153,3 +154,36 @@ class DigestBehaviourTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EmptyNoticeTextTest(unittest.TestCase):
+    """26.10.2026: давним подписчикам «нет» читалось как поломка бота."""
+
+    def test_already_received_everything(self):
+        from bot.subscriber_formatters import format_empty_notice
+        text = format_empty_notice(["product_designer"], already_sent=True)
+        self.assertIn("Новых вакансий продуктового дизайнера сегодня нет", text)
+        self.assertIn("Все свежие за 3 дня вы уже получили", text)
+
+    def test_nothing_fresh_at_all(self):
+        from bot.subscriber_formatters import format_empty_notice
+        text = format_empty_notice(["product_designer"], already_sent=False)
+        self.assertIn("За 3 дня новых не появилось", text)
+        self.assertNotIn("уже получили", text)
+
+    def test_period_words(self):
+        from bot.subscriber_formatters import _period_phrase
+        self.assertEqual(_period_phrase(24), "за сутки")
+        self.assertEqual(_period_phrase(48), "за 2 дня")
+        self.assertEqual(_period_phrase(120), "за 5 дней")
+        self.assertEqual(_period_phrase(36), "за 36 ч")
+
+
+class EmptyNoticeInDigestTest(DigestBehaviourTest):
+    async def test_second_day_says_already_received(self):
+        self.db.set_subscriber_roles(10, ["product_designer"])
+        await self.run_digest()
+        self.bot.send_message.reset_mock()
+        with mock.patch.object(self.service, "_today", return_value="2099-01-01"):
+            await self.run_digest()
+        self.assertIn("Все свежие за 3 дня вы уже получили", self.texts()[0])

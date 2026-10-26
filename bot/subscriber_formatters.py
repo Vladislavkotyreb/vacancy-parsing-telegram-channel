@@ -73,12 +73,33 @@ def format_subscriber_digest(
     )
 
 
-def format_empty_notice(role_ids: list[str]) -> str:
-    """«Новых вакансий нет»: важное — в заголовке, ниже — что будет дальше.
+def format_empty_notice(role_ids: list[str], already_sent: bool = False, max_age_hours: int = 72) -> str:
+    """«Новых вакансий нет»: важное — в заголовке, ниже — почему и что дальше.
 
     Для нескольких ролей — «по выбранным ролям», а не перечисление в скобках.
     «Найдено всего» не пишем: рядом с «новых нет» эта цифра только путает.
+
+    already_sent — свежие вакансии были, но человек их уже получил. Давние
+    подписчики видят так почти всё, и голое «нет» читалось как «бот сломался»
+    (26.10.2026: 14 из 25 давних подписчиков получили «нет»).
     """
     role = get_role(role_ids[0]) if len(role_ids) == 1 else None
     label = role.label if role else "по выбранным ролям"
-    return f"📭 <b>Новых вакансий {escape_html(label)} нет</b>\nЗавтра в\u00a010:00 проверю снова"
+    period = _period_phrase(max_age_hours)
+    reason = f"Все свежие {period} вы уже получили" if already_sent else f"{period[0].upper()}{period[1:]} новых не появилось"
+    return (
+        f"📭 <b>Новых вакансий {escape_html(label)} сегодня нет</b>\n"
+        f"{reason}. Завтра в\u00a010:00 проверю снова"
+    )
+
+
+def _period_phrase(hours: int) -> str:
+    """72 → «за 3 дня», 24 → «за сутки», 36 → «за 36 ч»."""
+    if hours == 24:
+        return "за сутки"
+    if hours % 24 == 0:
+        days = hours // 24
+        word = "день" if days % 10 == 1 and days % 100 != 11 else (
+            "дня" if days % 10 in (2, 3, 4) and days % 100 not in (12, 13, 14) else "дней")
+        return f"за {days} {word}"
+    return f"за {hours} ч"

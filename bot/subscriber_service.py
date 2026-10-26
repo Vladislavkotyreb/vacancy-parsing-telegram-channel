@@ -383,7 +383,14 @@ class SubscriberService:
 
         if included == 0:
             return await self._send_empty_notice(
-                user_id, role_ids, format_empty_notice(role_ids), roles_complete
+                user_id,
+                role_ids,
+                format_empty_notice(
+                    role_ids,
+                    already_sent=bool(fresh_vacancies),
+                    max_age_hours=self.settings.max_vacancy_age_hours,
+                ),
+                roles_complete,
             )
 
         delivered: Optional[Message] = None
