@@ -946,3 +946,22 @@ class DesignLeadTest(unittest.TestCase):
         self.assertTrue(ROLES["head_of_design"].matcher("Head of Design"))
         self.assertFalse(ROLES["head_of_design"].matcher("Design Lead"))
         self.assertTrue(ROLES["product_designer"].matcher("Lead Product Designer"))
+
+
+class DesignLeadLiveHHTest(unittest.TestCase):
+    """Живая выдача HH 27.10.2026: из 80 названий по запросам роли проходят только лиды."""
+
+    def test_hh_noise_is_filtered(self):
+        for title in (
+            "Ведущий дизайнер интерьера / тимлид / арт-директор", "Ведущий дизайнер корпусной мебели",
+            "Lead Level Designer (GameDev)", "Lead Narrative Designer", "SMM-лид премиального бренда",
+            "Главный графический дизайнер / Lead Print Designer", "Главный архитектор МКД / Тим-лид архитектурной команды",
+            "Арт директор e-commerce / Контент-Маркетолог маркетплейсы / Head of Design, руководитель контента",
+            "Ведущий инженер-программист ПЛИС (FPGA designer)", "Ведущий дизайнер",
+        ):
+            self.assertFalse(is_design_lead_vacancy(title), title)
+        for title in (
+            "Teamlead группы дизайна/ведущий дизайнер/главный дизайнер/руководитель группы дизайна",
+            "Ведущий дизайнер (Lead Designer)", "Ведущий дизайнер / Руководитель группы дизайна (Digital& AI)",
+        ):
+            self.assertTrue(is_design_lead_vacancy(title), title)
