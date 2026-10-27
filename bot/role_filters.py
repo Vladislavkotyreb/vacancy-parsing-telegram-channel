@@ -259,6 +259,27 @@ def is_csharp_developer_vacancy(title: str) -> bool:
     return _matches(title, CSHARP_INCLUDE, CSHARP_EXCLUDE)
 
 
+# --- Design Lead (27.10.2026) ---
+# Лид команды дизайнеров. Уровень отдела и выше («руководитель отдела/направления
+# дизайна», Head of Design, директор) — роль head_of_design, здесь не дублируем.
+# Фильтр продуктового дизайнера (bot/filters.py) не трогаем: он общий с каналом.
+DESIGN_LEAD_INCLUDE = [
+    re.compile(r"design\s*lead|lead\s+(?:(?:product|ux|ui|ux\s*/\s*ui|ui\s*/\s*ux|digital|web)[\s/-]*)*designer", re.I),
+    re.compile(r"дизайн[\s-]*лид|лид[\s-]+(?:\w+[\s-]+)?дизайн", re.I),
+    re.compile(r"(?:тимлид|team\s*lead)\w*[\s-]+(?:\w+[\s-]+)?(?:дизайн|design)|(?:дизайн|design)\w*[\s-]+(?:тимлид|team\s*lead)", re.I),
+    re.compile(r"руководител\w*\s+(?:\w+\s+)?(?:группы|команды)\s+(?:\w+\s+)?дизайн", re.I),
+]
+DESIGN_LEAD_EXCLUDE = [
+    re.compile(r"head\s+of|director|директор|отдел\w*|направлени\w*|департамент", re.I),
+    re.compile(r"game|гейм|level\s+design|интерьер|interior|ландшафт|motion|моушн|fashion|одежд|промышленн|industrial", re.I),
+    re.compile(r"engineer|инженер|разработчик|developer|аналитик|analyst", re.I),
+]
+
+
+def is_design_lead_vacancy(title: str) -> bool:
+    return _matches(title, DESIGN_LEAD_INCLUDE, DESIGN_LEAD_EXCLUDE)
+
+
 # --- IT Project Manager (26.10.2026) ---
 # Роль «Project Manager» уже была и снята: на HH под этим названием стройка,
 # ивенты и продажи. Теперь HH опрашивается только IT-формулировками (см. роль),

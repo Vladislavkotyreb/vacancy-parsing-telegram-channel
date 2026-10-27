@@ -912,3 +912,37 @@ class ITProjectManagerTest(unittest.TestCase):
         for title in ("IT Project Manager", "Руководитель ИТ-проектов"):
             self.assertFalse(ROLES["product_manager"].matcher(title), title)
             self.assertFalse(ROLES["product_owner"].matcher(title), title)
+
+
+# --- Design Lead (27.10.2026) ---
+from bot.role_filters import is_design_lead_vacancy  # noqa: E402
+
+
+class DesignLeadTest(unittest.TestCase):
+    def test_design_lead_titles(self):
+        for title in (
+            "Design Lead", "Product Design Lead", "Lead Product Designer", "Lead UX/UI Designer",
+            "Lead Designer", "Дизайн-лид", "Лид дизайнер", "Лид продуктовый дизайнер", "Team Lead дизайна",
+            "Тимлид дизайнеров", "Руководитель группы дизайна", "Руководитель группы продуктового дизайна",
+            "Design Team Lead",
+        ):
+            self.assertTrue(is_design_lead_vacancy(title), title)
+
+    def test_not_design_lead(self):
+        for title in (
+            "Head of Design", "Руководитель отдела дизайна", "Руководитель направления дизайна",
+            "Design Director", "Директор по дизайну", "Lead Game Designer (Balance/Economy)",
+            "Design Lead Engineer", "Lead Motion Designer", "Lead Interior Designer",
+            "Продуктовый дизайнер", "Ведущий продуктовый дизайнер", "Team Lead Python",
+        ):
+            self.assertFalse(is_design_lead_vacancy(title), title)
+
+    def test_role_is_in_design_menu(self):
+        self.assertIn("design_lead", get_category("design").role_ids)
+        self.assertEqual(ROLES["design_lead"].button_label, "Design Lead")
+        self.assertLessEqual(len("s2:role:design:design_lead".encode()), 64)
+
+    def test_head_of_design_and_product_designer_unchanged(self):
+        self.assertTrue(ROLES["head_of_design"].matcher("Head of Design"))
+        self.assertFalse(ROLES["head_of_design"].matcher("Design Lead"))
+        self.assertTrue(ROLES["product_designer"].matcher("Lead Product Designer"))
