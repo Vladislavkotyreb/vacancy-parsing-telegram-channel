@@ -151,3 +151,14 @@ class DigestPromoTest(unittest.IsolatedAsyncioTestCase):
         self.db.stop_promo(1)
         bot, stats = await self._run()
         self.assertEqual(stats.promos_sent, 0)
+
+
+class BrokenPromoTest(DigestPromoTest):
+    async def test_broken_promo_never_blocks_the_digest(self):
+        """Ревью: падение рекламы не должно лишать подборки и останавливать рассылку."""
+        with mock.patch("bot.subscriber_service.format_promo", side_effect=RuntimeError("битая реклама")):
+            bot, stats = await self._run()
+        self.assertTrue(any(c == 1 for c, _ in bot.sent), "дизайнер получил подборку")
+        self.assertTrue(any(c == 2 for c, _ in bot.sent), "и остальные тоже")
+        self.assertEqual(stats.failed_users, [])
+        self.assertEqual(stats.promos_sent, 0)

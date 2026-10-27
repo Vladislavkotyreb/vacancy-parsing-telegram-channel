@@ -140,7 +140,15 @@ class SubscriberService:
             return True
 
         try:
-            await self._send_promo(user_id, role_ids, stats)
+            try:
+                await self._send_promo(user_id, role_ids, stats)
+            except TelegramForbiddenError:
+                raise  # заблокировал бота — обработка ниже, как для подборки
+            except Exception:
+                # Реклама не должна стоить человеку подборки: битая партнёрская
+                # вакансия иначе валила бы доставку всем подписчикам её ролей,
+                # а предохранитель «5 подряд» останавливал бы всю рассылку.
+                logger.exception("Партнёрская вакансия не ушла подписчику %s — подборка уйдёт без неё", user_id)
             region = self.db.get_region(user_id)
             vacancies, fresh = self._merge_for_roles(cache, role_ids, region)
             logger.info(
