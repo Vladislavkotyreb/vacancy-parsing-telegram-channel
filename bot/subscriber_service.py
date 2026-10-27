@@ -16,6 +16,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import InlineKeyboardMarkup, Message
 from aiogram.exceptions import (
     ClientDecodeError,
+    TelegramBadRequest,
     TelegramForbiddenError,
     TelegramNetworkError,
     TelegramRetryAfter,
@@ -346,7 +347,14 @@ class SubscriberService:
         row = self.db.next_promo_for(user_id, role_ids)
         if not row:
             return
-        await self._safe_send(user_id, format_promo(promo_from_row(row)))
+        try:
+            await self._safe_send(user_id, format_promo(promo_from_row(row)))
+        except TelegramBadRequest:
+            # Телеграм отверг само сообщение — так будет у всех: снимаем размещение,
+            # чтобы не плодить сотню ошибок за утро. Админ увидит «снято» в /promo_list.
+            self.db.stop_promo(row["id"])
+            logger.error("Партнёрская вакансия #%s отвергнута Телеграмом — размещение снято", row["id"])
+            raise
         self.db.mark_promo_sent(row["id"], user_id)
         stats.promos_sent += 1
         logger.info("Подписчик %s: партнёрская вакансия #%s", user_id, row["id"])

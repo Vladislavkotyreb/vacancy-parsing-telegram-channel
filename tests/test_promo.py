@@ -162,3 +162,50 @@ class BrokenPromoTest(DigestPromoTest):
         self.assertTrue(any(c == 2 for c, _ in bot.sent), "и остальные тоже")
         self.assertEqual(stats.failed_users, [])
         self.assertEqual(stats.promos_sent, 0)
+
+
+class PromoValidationTest(unittest.TestCase):
+    def test_bare_scheme_and_long_fields_are_rejected(self):
+        bad = GOOD.replace("https://job.ozon.ru/1", "https://").replace("Ozon", "O" * 500)
+        promo, errors = parse_promo(bad)
+        self.assertIsNone(promo)
+        self.assertTrue(any("полной" in e for e in errors))
+        self.assertTrue(any("«компания» длиннее" in e for e in errors))
+
+    def test_longest_allowed_promo_fits_telegram(self):
+        from bot.promo import MAX_LEN, FIELDS
+        labels = {f: k for k, f in FIELDS.items()}
+        text = "/promo_add\nроли: design\nдней: 7\n" + "\n".join(
+            f"{labels[f]}: " + ("https://a.ru/" + "x" * (n - 13) if f == "url" else "&" * n) for f, n in MAX_LEN.items()
+        )
+        promo, errors = parse_promo(text)
+        # Из одних «&» после экранирования не влезает — бот откажет, а не сломает рассылку.
+        self.assertIsNone(promo)
+        self.assertIn("слишком длинной", errors[0])
+        normal = parse_promo(text.replace("&", "я"))[0]
+        self.assertIsNotNone(normal)
+        self.assertLess(len(format_promo(normal)), 4096)
+
+
+class RejectedPromoTest(DigestPromoTest):
+    async def test_telegram_rejecting_promo_stops_it_and_digest_still_goes(self):
+        from aiogram.exceptions import TelegramBadRequest
+        from aiogram.methods import SendMessage
+
+        class _RejectingBot(_Bot):
+            async def send_message(self, chat_id, text, **kw):
+                if "Партнёрская" in text:
+                    raise TelegramBadRequest(SendMessage(chat_id=chat_id, text="x"), "can't parse entities")
+                return await super().send_message(chat_id, text, **kw)
+
+        bot = _RejectingBot()
+        found = [Vacancy(source="hh.ru", external_id="1", title="Продуктовый дизайнер", company="VK",
+                         url="https://hh.ru/1", published_at=datetime.now(timezone.utc))]
+
+        async def collect(settings, role):
+            return list(found)
+        with mock.patch("bot.subscriber_service.collect_for_role", side_effect=collect):
+            stats = await SubscriberService(self.settings, self.db, bot).run_daily_digests()
+        self.assertTrue(any(c == 1 for c, _ in bot.sent), "подборка дизайнеру ушла")
+        self.assertEqual(stats.failed_users, [])
+        self.assertEqual(self.db.list_promos()[0]["active"], 0, "размещение снято")

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import html
+from urllib.parse import urlparse
 from dataclasses import dataclass
 from typing import Optional
 
@@ -17,6 +18,9 @@ from bot.role_categories import CATEGORIES
 from bot.roles import ROLES
 
 MAX_DAYS = 60
+# Длины полей: сообщение заведомо меньше лимита Телеграма (4096) с запасом.
+MAX_MESSAGE = 3500  # готовое сообщение с HTML; лимит Телеграма — 4096
+MAX_LEN = {"title": 200, "company": 120, "salary": 120, "work_format": 120, "url": 600, "erid": 120}
 
 # Поля команды: ключ в сообщении → поле Promo. Порядок — как в подсказке.
 FIELDS = {
@@ -105,12 +109,16 @@ def parse_promo(text: str) -> tuple[Optional[Promo], list[str]]:
         if not 1 <= days <= MAX_DAYS:
             errors.append(f"«дней» — число от 1 до {MAX_DAYS}")
     url = values.get("url", "")
-    if url and not url.startswith(("https://", "http://")):
-        errors.append("ссылка должна начинаться с https://")
+    if url and (not url.startswith(("https://", "http://")) or not urlparse(url).netloc or " " in url):
+        errors.append("ссылка должна быть полной: https://сайт/…")
+    labels = {f: k for k, f in FIELDS.items()}
+    for field, limit in MAX_LEN.items():
+        if len(values.get(field, "")) > limit:
+            errors.append(f"«{labels[field]}» длиннее {limit} символов")
     if errors:
         return None, errors
 
-    return Promo(
+    promo = Promo(
         roles=roles,
         days=days,
         title=values["title"],
@@ -119,7 +127,10 @@ def parse_promo(text: str) -> tuple[Optional[Promo], list[str]]:
         salary=values.get("salary"),
         work_format=values.get("work_format"),
         erid=values.get("erid"),
-    ), []
+    )
+    if len(format_promo(promo)) > MAX_MESSAGE:
+        return None, ["вакансия получилась слишком длинной для сообщения — сократи поля"]
+    return promo, []
 
 
 def format_promo(promo: Promo) -> str:
