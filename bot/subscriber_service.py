@@ -33,6 +33,7 @@ from bot.roles import get_role
 from bot.russian import format_digest_roles_label
 from bot.subscriber_collect import SourceLimited, collect_for_role, shared_feeds
 from bot.formatters import format_vacancy
+from bot.promo import format_promo, promo_from_row
 from bot.subscriber_formatters import format_empty_notice, format_subscriber_digest
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,8 @@ class DigestStats:
     # Кому подборка так и не дошла (и после второго прохода) и кто заблокировал бота.
     failed_users: list[int] = field(default_factory=list)
     blocked: int = 0
+    # Сколько партнёрских (платных) вакансий ушло — для отчёта рекламодателю.
+    promos_sent: int = 0
 
 
 class SubscriberService:
@@ -137,6 +140,7 @@ class SubscriberService:
             return True
 
         try:
+            await self._send_promo(user_id, role_ids, stats)
             region = self.db.get_region(user_id)
             vacancies, fresh = self._merge_for_roles(cache, role_ids, region)
             logger.info(
@@ -324,6 +328,20 @@ class SubscriberService:
             len(limited),
         )
         return cache, failed, limited
+
+    async def _send_promo(self, user_id: int, role_ids: list[str], stats: DigestStats) -> None:
+        """Партнёрская вакансия — отдельным сообщением перед подборкой, каждому один раз.
+
+        Отметка сразу после отправки: если подборка дальше не дойдёт, второй
+        проход рекламу не повторит.
+        """
+        row = self.db.next_promo_for(user_id, role_ids)
+        if not row:
+            return
+        await self._safe_send(user_id, format_promo(promo_from_row(row)))
+        self.db.mark_promo_sent(row["id"], user_id)
+        stats.promos_sent += 1
+        logger.info("Подписчик %s: партнёрская вакансия #%s", user_id, row["id"])
 
     def _merge_for_roles(
         self, cache: dict[str, list[Vacancy]], role_ids: list[str], region: str = "cis"

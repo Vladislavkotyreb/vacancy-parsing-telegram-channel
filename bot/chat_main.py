@@ -43,6 +43,8 @@ from bot.digest_more import (
     send_overflow,
     user_lock,
 )
+from bot.formatters import escape_html
+from bot.promo import PROMO_HELP, format_promo, parse_promo, promo_from_row
 from bot.role_categories import CATEGORIES, CATEGORY_IDS, get_category
 from bot.regions import REGION_BUTTONS, normalize_region, region_phrase
 from bot.roles import ROLES
@@ -526,6 +528,64 @@ async def cmd_stats(message: Message, db: VacancyDatabase, settings: Settings) -
         db, settings.timezone, exclude_user_id=settings.telegram_admin_id
     )
     await message.answer(text, parse_mode="HTML")
+
+
+@router.message(Command("promo_add"))
+async def cmd_promo_add(message: Message, db: VacancyDatabase, settings: Settings) -> None:
+    """Платное размещение вакансии: проверка, превью и охват — сразу в ответе."""
+    if not message.from_user or not _is_admin(message.from_user.id, settings):
+        await message.answer("Команда только для администратора.")
+        return
+    promo, errors = parse_promo(message.text or "")
+    if promo is None:
+        lines = (message.text or "").splitlines()
+        problem = "" if len(lines) <= 1 else "Не получилось: " + "; ".join(errors) + "\n\n"
+        await message.answer(problem + PROMO_HELP)
+        return
+    promo_id = db.add_promo(promo)
+    audience = db.promo_audience(promo.roles)
+    await message.answer(
+        f"✅ Размещение №{promo_id} на {promo.days} дн. Уйдёт подписчикам этих ролей: "
+        f"<b>{audience}</b> — каждому один раз, в ближайшей утренней рассылке.\n"
+        f"Снять: /promo_stop {promo_id}\n\nТак увидят подписчики 👇",
+        parse_mode="HTML",
+    )
+    await message.answer(format_promo(promo), parse_mode="HTML", disable_web_page_preview=True)
+
+
+@router.message(Command("promo_list"))
+async def cmd_promo_list(message: Message, db: VacancyDatabase, settings: Settings) -> None:
+    if not message.from_user or not _is_admin(message.from_user.id, settings):
+        await message.answer("Команда только для администратора.")
+        return
+    promos = db.list_promos()
+    if not promos:
+        await message.answer("Размещений пока нет.\n\n" + PROMO_HELP)
+        return
+    now = datetime.now(ZoneInfo(settings.timezone))
+    lines = ["<b>Партнёрские вакансии</b>"]
+    for row in promos[:20]:
+        promo = promo_from_row(row)
+        expires = datetime.fromisoformat(row["expires_at"]).astimezone(now.tzinfo)
+        state = "снято" if not promo.active else ("закончилось" if expires < now else f"до {expires:%d.%m}")
+        lines.append(
+            f"№{promo.id} · {escape_html(promo.title)} — {escape_html(promo.company)} · {state} · "
+            f"доставлено <b>{row['delivered']}</b> из {db.promo_audience(promo.roles)}"
+        )
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.message(Command("promo_stop"))
+async def cmd_promo_stop(message: Message, db: VacancyDatabase, settings: Settings) -> None:
+    if not message.from_user or not _is_admin(message.from_user.id, settings):
+        await message.answer("Команда только для администратора.")
+        return
+    arg = (message.text or "").partition(" ")[2].strip().lstrip("№")
+    if not arg.isdigit():
+        await message.answer("Укажи номер: /promo_stop 3 (номера — в /promo_list)")
+        return
+    stopped = db.stop_promo(int(arg))
+    await message.answer(f"Размещение №{arg} снято." if stopped else f"Действующего размещения №{arg} нет.")
 
 
 # --- Шаг 1: специальность (тап → сразу шаг 2) ---

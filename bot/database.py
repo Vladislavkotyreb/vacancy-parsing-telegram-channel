@@ -151,6 +151,29 @@ class VacancyDatabase:
                 -- только последняя подборка; digest_day — её дата по TIMEZONE.
                 -- Где искать: cis / world / both (bot/regions.py). Отдельно от ролей:
                 -- регион выбирают первым шагом /start, ещё до подписки.
+                -- Платные (партнёрские) вакансии, bot/promo.py. roles — id через запятую.
+                CREATE TABLE IF NOT EXISTS promos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    roles TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    company TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    salary TEXT,
+                    work_format TEXT,
+                    erid TEXT,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    active INTEGER NOT NULL DEFAULT 1
+                );
+
+                -- Кому какая партнёрская вакансия ушла: каждому — один раз.
+                CREATE TABLE IF NOT EXISTS promo_sent (
+                    promo_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    sent_at TEXT NOT NULL,
+                    PRIMARY KEY (promo_id, user_id)
+                );
+
                 CREATE TABLE IF NOT EXISTS user_region (
                     user_id INTEGER PRIMARY KEY,
                     region TEXT NOT NULL,
@@ -812,6 +835,89 @@ class VacancyDatabase:
                                                    updated_at = excluded.updated_at
                 """,
                 (user_id, normalize_region(region), now),
+            )
+
+    # --- Партнёрские вакансии (bot/promo.py) ---
+
+    def add_promo(self, promo) -> int:
+        now = datetime.now(timezone.utc)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO promos (roles, title, company, url, salary, work_format, erid, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ",".join(promo.roles), promo.title, promo.company, promo.url, promo.salary,
+                    promo.work_format, promo.erid, now.isoformat(),
+                    (now + timedelta(days=promo.days)).isoformat(),
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def list_promos(self) -> list[dict]:
+        """Все размещения, новые сверху, с числом доставок."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT p.*, (SELECT COUNT(*) FROM promo_sent s WHERE s.promo_id = p.id) AS delivered
+                FROM promos p ORDER BY p.id DESC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def stop_promo(self, promo_id: int) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute("UPDATE promos SET active = 0 WHERE id = ? AND active = 1", (promo_id,))
+            return cursor.rowcount > 0
+
+    def promo_audience(self, roles: list[str]) -> int:
+        """Сколько действующих подписчиков хотя бы на одну из ролей."""
+        if not roles:
+            return 0
+        marks = ",".join("?" for _ in roles)
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT COUNT(DISTINCT sr.user_id) FROM subscriber_roles sr
+                JOIN subscribers s ON s.user_id = sr.user_id AND s.active = 1
+                WHERE sr.role IN ({marks})
+                """,
+                roles,
+            ).fetchone()
+        return int(row[0])
+
+    def next_promo_for(self, user_id: int, role_ids: list[str]) -> Optional[dict]:
+        """Самое старое действующее размещение для ролей человека, которое ему ещё
+        не уходило. Не больше одного в день: если сегодня уже что-то ушло — None."""
+        now = datetime.now(timezone.utc)
+        with self._connect() as conn:
+            recent = conn.execute(
+                "SELECT 1 FROM promo_sent WHERE user_id = ? AND sent_at >= ? LIMIT 1",
+                (user_id, (now - timedelta(hours=20)).isoformat()),
+            ).fetchone()
+            if recent:
+                return None
+            rows = conn.execute(
+                """
+                SELECT * FROM promos
+                WHERE active = 1 AND expires_at > ?
+                  AND id NOT IN (SELECT promo_id FROM promo_sent WHERE user_id = ?)
+                ORDER BY id
+                """,
+                (now.isoformat(), user_id),
+            ).fetchall()
+        wanted = set(role_ids)
+        for row in rows:
+            if wanted & set(row["roles"].split(",")):
+                return dict(row)
+        return None
+
+    def mark_promo_sent(self, promo_id: int, user_id: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO promo_sent (promo_id, user_id, sent_at) VALUES (?, ?, ?)",
+                (promo_id, user_id, datetime.now(timezone.utc).isoformat()),
             )
 
     def replace_digest_overflow(self, user_id: int, day: str, vacancies: list[Vacancy]) -> None:

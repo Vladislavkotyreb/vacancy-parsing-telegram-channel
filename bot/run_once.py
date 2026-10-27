@@ -200,6 +200,8 @@ async def main() -> int:
                     lines.append(f"⚠️ Не дошло и после повтора: {len(stats.failed_users)} — подробности в logs/digest.log")
                 if stats.blocked:
                     lines.append(f"Заблокировали бота: {stats.blocked}")
+                if stats.promos_sent:
+                    lines.append(f"Партнёрских вакансий отправлено: {stats.promos_sent}")
                 if stats.failed_roles:
                     # Без этой строки сбой сбора выглядит так же, как пустой день.
                     lines.append(
