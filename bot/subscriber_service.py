@@ -48,6 +48,7 @@ NOW_RETRY_AFTER_FAIL_SEC = 10 * 60
 # Предел на одну роль и на всё нажатие: дольше — отдаём то, что уже есть.
 NOW_COLLECT_TIMEOUT_SEC = 60
 NOW_SEARCH_BUDGET_SEC = 90
+NOW_MIN_ROLE_SEC = 30
 # Сколько ждать, пока закончится чужой поиск; дольше — отдаём последний сбор.
 NOW_LOCK_WAIT_SEC = 15
 # В это время (по часам бота) идут утренний сбор и рассылка: кнопка не ходит
@@ -405,9 +406,18 @@ class SubscriberService:
         if not self.roles_to_search(user_id):
             return
         lock = _collect_lock()
+        # shield + ручная уборка: в Python 3.8 отмена wait_for после успешного
+        # acquire оставляла замок занятым навсегда.
+        acquiring = asyncio.ensure_future(lock.acquire())
         try:
-            await asyncio.wait_for(lock.acquire(), NOW_LOCK_WAIT_SEC)
-        except asyncio.TimeoutError:
+            await asyncio.wait_for(asyncio.shield(acquiring), NOW_LOCK_WAIT_SEC)
+        except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
+            if acquiring.done() and not acquiring.cancelled() and acquiring.exception() is None:
+                lock.release()
+            else:
+                acquiring.cancel()
+            if isinstance(exc, asyncio.CancelledError):
+                raise
             logger.info("Кнопка: идёт чужой поиск — пользователю %s отдаём последний сбор", user_id)
             return
         try:
@@ -418,7 +428,9 @@ class SubscriberService:
             with shared_feeds():
                 for role_id in stale:
                     left = deadline - loop.time()
-                    if left < 5:
+                    # Роль, которой не хватит времени, не начинаем: таймаут пометил бы
+                    # её неудачной на 10 минут без её вины.
+                    if left < NOW_MIN_ROLE_SEC:
                         logger.info("Кнопка: время на поиск вышло, роль %s не искали", role_id)
                         break
                     await self._refresh_role(role_id, min(left, NOW_COLLECT_TIMEOUT_SEC))

@@ -380,5 +380,43 @@ class ReviewFixes2Test(LiveSearchTest):
         self.assertNotIn(chat_main.NOW_SEARCHING_TEXT, [c.args[0] for c in msg.answer.await_args_list])
 
 
+class LockSafetyTest(LiveSearchTest):
+    async def test_lock_is_free_after_timeout_and_after_cancel(self):
+        import asyncio
+        from bot import subscriber_service
+        self.db.set_subscriber_roles(10, ["backend_python"])
+        service = SubscriberService(self.settings, self.db, self.bot)
+        lock = subscriber_service._collect_lock()
+        await lock.acquire()
+        with mock.patch.object(subscriber_service, "NOW_LOCK_WAIT_SEC", 0.05):
+            await service.refresh_for_user(10)  # таймаут ожидания
+        lock.release()
+        self.assertFalse(lock.locked())
+
+        # отмена во время ожидания чужого поиска
+        await lock.acquire()
+        task = asyncio.ensure_future(service.refresh_for_user(10))
+        loop = asyncio.get_running_loop()
+        for _ in range(5):
+            await loop.run_in_executor(None, lambda: None)
+        task.cancel()
+        lock.release()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        for _ in range(5):
+            await loop.run_in_executor(None, lambda: None)
+        self.assertFalse(lock.locked(), "замок не должен остаться занятым после отмены")
+
+    async def test_role_not_started_without_enough_time(self):
+        from bot import subscriber_service
+        self.db.set_subscriber_roles(10, ["backend_python", "backend_go"])
+        collect = AsyncMock(return_value=[_v(1)])
+        with mock.patch.object(subscriber_service, "NOW_SEARCH_BUDGET_SEC", 10), \
+             mock.patch("bot.subscriber_service.collect_for_role", collect):
+            await SubscriberService(self.settings, self.db, self.bot).refresh_for_user(10)
+        collect.assert_not_awaited()
+        self.assertEqual(subscriber_service._now_failed_at, {})
+
+
 if __name__ == "__main__":
     unittest.main()
