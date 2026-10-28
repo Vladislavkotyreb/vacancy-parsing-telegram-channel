@@ -47,6 +47,12 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
         sleep.start()
         self.addCleanup(sleep.stop)
         chat_main._now_pressed_at.clear()
+        from bot import subscriber_service
+        subscriber_service._now_failed_at.clear()
+        # Тесты не должны зависеть от того, попали ли они на окно утренней рассылки.
+        quiet = mock.patch.object(SubscriberService, "in_quiet_window", return_value=False)
+        quiet.start()
+        self.addCleanup(quiet.stop)
 
     async def test_new_subscriber_gets_vacancies_right_away(self):
         self.db.save_role_cache({"backend_python": [_v(1), _v(2)], "backend_go": [_v(3, "Go-разработчик")]}, [])
@@ -119,7 +125,7 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
         msg = SimpleNamespace(text=BTN_NOW, from_user=SimpleNamespace(id=10), answer=AsyncMock())
         await chat_main.btn_now(msg, self.db, self.settings, self.bot)
         self.assertTrue(self.bot.calls, "подборка ушла")
-        self.assertEqual([c.args[0] for c in msg.answer.await_args_list], [chat_main.NOW_SEARCHING_TEXT])
+        msg.answer.assert_not_awaited()  # сбор свежий — без «ищу» и без лишних сообщений
         await chat_main.btn_now(msg, self.db, self.settings, self.bot)
         self.assertEqual(msg.answer.await_args.args[0], chat_main.NOW_COOLDOWN_TEXT)
 
@@ -298,6 +304,80 @@ class LiveSearchTest(VacanciesNowTest):
              mock.patch("bot.subscriber_service.collect_for_role", side_effect=hang):
             await self.press()
         self.assertIn("Python-разработчик 1", self.sent_text())
+
+
+class ReviewFixes2Test(LiveSearchTest):
+    """Независимое ревью живого поиска."""
+
+    async def test_failed_role_is_not_searched_again_for_a_while(self):
+        self.db.set_subscriber_roles(10, ["backend_python"])
+        collect = AsyncMock(side_effect=RuntimeError("HH тормозит"))
+        with mock.patch("bot.subscriber_service.collect_for_role", collect):
+            await self.press()
+            chat_main._now_pressed_at.clear()
+            await self.press()
+        self.assertEqual(collect.await_count, 1)
+
+    async def test_incomplete_recent_collection_is_searched_again(self):
+        self.db.save_role_cache({"backend_python": [_v(1)]}, ["backend_python"])  # только что, но неполный
+        self.db.set_subscriber_roles(10, ["backend_python"])
+        collect = AsyncMock(return_value=[_v(2)])
+        with mock.patch("bot.subscriber_service.collect_for_role", collect):
+            await self.press()
+        collect.assert_awaited_once()
+        self.assertIn("Python-разработчик 2", self.sent_text())
+
+    async def test_no_search_around_morning_digest(self):
+        self.db.save_role_cache({"backend_python": [_v(1)]}, [])
+        _age_cache(self.db, "backend_python", 90)
+        self.db.set_subscriber_roles(10, ["backend_python"])
+        with mock.patch.object(SubscriberService, "in_quiet_window", return_value=True), \
+             mock.patch("bot.subscriber_service.collect_for_role", side_effect=AssertionError("не должен искать")):
+            msg = await self.press()
+        self.assertIn("Python-разработчик 1", self.sent_text())
+        self.assertNotIn(chat_main.NOW_SEARCHING_TEXT, [c.args[0] for c in msg.answer.await_args_list])
+
+    async def test_quiet_window_bounds(self):
+        from bot.subscriber_service import is_quiet_time
+        cases = {(9, 54): False, (9, 55): True, (10, 15): True, (10, 44): True, (10, 45): False, (18, 0): False}
+        for (h, m), expected in cases.items():
+            self.assertEqual(is_quiet_time(h, m), expected, (h, m))
+
+    async def test_waiting_for_someone_elses_search_is_bounded(self):
+        import asyncio
+        from bot import subscriber_service
+        self.db.save_role_cache({"backend_python": [_v(1)]}, [])
+        _age_cache(self.db, "backend_python", 90)
+        self.db.set_subscriber_roles(10, ["backend_python"])
+        lock = subscriber_service._collect_lock()
+        await lock.acquire()  # чужой поиск идёт
+        try:
+            with mock.patch.object(subscriber_service, "NOW_LOCK_WAIT_SEC", 0.05), \
+                 mock.patch("bot.subscriber_service.collect_for_role", side_effect=AssertionError("не должен искать")):
+                await self.press()
+        finally:
+            lock.release()
+        self.assertIn("Python-разработчик 1", self.sent_text())
+
+    async def test_db_error_during_search_still_answers(self):
+        self.db.save_role_cache({"backend_python": [_v(1)]}, [])
+        self.db.set_subscriber_roles(10, ["backend_python"])
+        with mock.patch.object(SubscriberService, "roles_to_search", side_effect=RuntimeError("database is locked")):
+            await self.press()
+        self.assertIn("Python-разработчик 1", self.sent_text())
+
+    async def test_send_error_gets_a_reply(self):
+        self.db.save_role_cache({"backend_python": [_v(1)]}, [])
+        self.db.set_subscriber_roles(10, ["backend_python"])
+        with mock.patch.object(SubscriberService, "send_now", side_effect=RuntimeError("сбой")):
+            msg = await self.press()
+        self.assertIn("Не получилось", msg.answer.await_args.args[0])
+
+    async def test_searching_message_only_when_searching(self):
+        self.db.save_role_cache({"backend_python": [_v(1)]}, [])  # свежий — искать нечего
+        self.db.set_subscriber_roles(10, ["backend_python"])
+        msg = await self.press()
+        self.assertNotIn(chat_main.NOW_SEARCHING_TEXT, [c.args[0] for c in msg.answer.await_args_list])
 
 
 if __name__ == "__main__":

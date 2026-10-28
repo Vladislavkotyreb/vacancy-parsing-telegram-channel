@@ -73,8 +73,9 @@ NOW_TEXTS = {
     "no_cache": "Площадки сейчас не отвечают — попробуй через несколько минут.",
     "nothing_new": "Новых вакансий пока нет — всё свежее ты уже получил.\nЗагляни позже или дождись утренней подборки.",
     "digest_running": "Утренняя рассылка идёт прямо сейчас — подборка придёт через пару минут.",
+    "error": "Не получилось — попробуй через несколько минут.",
 }
-NOW_SEARCHING_TEXT = "🔎 Ищу новые вакансии по твоим ролям — это займёт до минуты…"
+NOW_SEARCHING_TEXT = "🔎 Ищу новые вакансии по твоим ролям — это может занять пару минут…"
 NOW_COOLDOWN_TEXT = "Только что искал — попробуй через минуту."
 DIGEST_LOCK = Path(__file__).resolve().parent.parent / "logs" / "digest.lock"
 
@@ -536,25 +537,29 @@ async def btn_now(message: Message, db: VacancyDatabase, settings: Settings, bot
     _now_pressed_at[user_id] = now
     service = SubscriberService(settings, db, bot)
     async with lock:
-        if not db.get_subscriber_roles(user_id):
-            outcome = "not_subscribed"
-        else:
-            searching = None
-            try:
+        searching = None
+        try:
+            if service.roles_to_search(user_id):
                 searching = await message.answer(NOW_SEARCHING_TEXT)
-            except Exception:
-                logger.warning("Кнопка: не отправил «ищу» пользователю %s", user_id)
             await service.refresh_for_user(user_id)
+        except Exception:
+            # Поиск — лишь улучшение: при любом сбое отдаём последний сбор.
+            logger.exception("Кнопка: поиск для %s упал", user_id)
+        finally:
             if searching is not None:
                 try:
                     await searching.delete()
                 except Exception:
                     pass
-            # Пока искали, могла начаться утренняя рассылка — тогда не дублируем её.
-            if _digest_running():
-                outcome = "digest_running"
-            else:
+        # Пока искали, могла начаться утренняя рассылка — тогда не дублируем её.
+        if _digest_running():
+            outcome = "digest_running"
+        else:
+            try:
                 outcome = await service.send_now(user_id)
+            except Exception:
+                logger.exception("Кнопка: подборка для %s не ушла", user_id)
+                outcome = "error"
     if outcome in NOW_TEXTS:
         subscribed = outcome != "not_subscribed"
         await message.answer(NOW_TEXTS[outcome], reply_markup=main_menu_keyboard(subscribed))

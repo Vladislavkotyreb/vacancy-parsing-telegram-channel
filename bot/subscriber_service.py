@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Iterable, Optional, Union
@@ -41,11 +42,27 @@ logger = logging.getLogger(__name__)
 # Кнопка «Вакансии сейчас» ищет заново роли, собранные раньше этого срока;
 # более свежий сбор (утренний или по чужому нажатию) берётся как есть.
 NOW_FRESH_SEC = 30 * 60
-# Сколько ждём поиска по одной роли; не успели — отдаём последний сбор.
-NOW_COLLECT_TIMEOUT_SEC = 120
+# Поиск по роли не удался (таймаут, сбой) — не повторяем его столько времени,
+# иначе при медленном HH каждое нажатие снова ждало бы до упора.
+NOW_RETRY_AFTER_FAIL_SEC = 10 * 60
+# Предел на одну роль и на всё нажатие: дольше — отдаём то, что уже есть.
+NOW_COLLECT_TIMEOUT_SEC = 60
+NOW_SEARCH_BUDGET_SEC = 90
+# Сколько ждать, пока закончится чужой поиск; дольше — отдаём последний сбор.
+NOW_LOCK_WAIT_SEC = 15
+# В это время (по часам бота) идут утренний сбор и рассылка: кнопка не ходит
+# на HH, чтобы не делить с рассылкой лимит запросов, и раздаёт последний сбор.
+NOW_QUIET_FROM = (9, 55)
+NOW_QUIET_TO = (10, 45)
 # Один живой поиск на процесс бота: бережём HH и лимит процессов хостинга.
 # Второе нажатие ждёт и берёт результат первого, а не ищет то же самое снова.
 _now_collect_lock: Optional[tuple] = None  # (цикл событий, замок)
+_now_failed_at: dict = {}  # роль → time.monotonic() неудачного поиска
+
+
+def is_quiet_time(hour: int, minute: int) -> bool:
+    """Окно утреннего сбора и рассылки, когда кнопка не ходит на HH."""
+    return NOW_QUIET_FROM <= (hour, minute) < NOW_QUIET_TO
 
 
 def _collect_lock() -> asyncio.Lock:
@@ -354,44 +371,80 @@ class SubscriberService:
         )
         return cache, failed, limited
 
+    def in_quiet_window(self) -> bool:
+        now = datetime.now(ZoneInfo(self.settings.timezone))
+        return is_quiet_time(now.hour, now.minute)
+
+    def roles_to_search(self, user_id: int) -> list:
+        """Роли подписчика, которые кнопка будет искать заново (пусто — раздаём последний сбор)."""
+        if self.in_quiet_window():
+            return []
+        role_ids = self.db.get_subscriber_roles(user_id)
+        if not role_ids:
+            return []
+        info = self.db.role_cache_info(role_ids)
+        now = datetime.now(timezone.utc)
+        mono = time.monotonic()
+        result = []
+        for role_id in role_ids:
+            failed_at = _now_failed_at.get(role_id)
+            if failed_at is not None and mono - failed_at < NOW_RETRY_AFTER_FAIL_SEC:
+                continue
+            collected = info.get(role_id)
+            if collected is None or not collected[1] or (now - collected[0]).total_seconds() > NOW_FRESH_SEC:
+                result.append(role_id)
+        return result
+
     async def refresh_for_user(self, user_id: int) -> None:
         """Кнопка «Вакансии сейчас»: заново собрать устаревшие роли подписчика.
 
-        Роль, собранная меньше NOW_FRESH_SEC назад, не ищется повторно. Новый
-        сбор объединяется с прежним: если площадка не ответила, прежние
-        вакансии не теряются. Любой сбой — пишем в лог и отдаём прежний сбор.
+        Свежий (до 30 мин) и полный сбор роли не повторяется. Новый сбор
+        объединяется с прежним: если площадка не ответила, прежние вакансии не
+        теряются. Сбой, таймаут, занятый поиск — отдаём последний сбор.
         """
-        role_ids = self.db.get_subscriber_roles(user_id)
-        if not role_ids:
+        if not self.roles_to_search(user_id):
             return
-        async with _collect_lock():
+        lock = _collect_lock()
+        try:
+            await asyncio.wait_for(lock.acquire(), NOW_LOCK_WAIT_SEC)
+        except asyncio.TimeoutError:
+            logger.info("Кнопка: идёт чужой поиск — пользователю %s отдаём последний сбор", user_id)
+            return
+        try:
             # Проверяем после ожидания: пока ждали, роль мог собрать другой пользователь.
-            now = datetime.now(timezone.utc)
-            times = self.db.role_cache_times(role_ids)
-            stale = [
-                role_id for role_id in role_ids
-                if role_id not in times or (now - times[role_id]).total_seconds() > NOW_FRESH_SEC
-            ]
-            if not stale:
-                return
+            stale = self.roles_to_search(user_id)
+            loop = asyncio.get_event_loop()
+            deadline = loop.time() + NOW_SEARCH_BUDGET_SEC
             with shared_feeds():
                 for role_id in stale:
-                    await self._refresh_role(role_id)
+                    left = deadline - loop.time()
+                    if left < 5:
+                        logger.info("Кнопка: время на поиск вышло, роль %s не искали", role_id)
+                        break
+                    await self._refresh_role(role_id, min(left, NOW_COLLECT_TIMEOUT_SEC))
+        finally:
+            lock.release()
 
-    async def _refresh_role(self, role_id: str) -> None:
+    async def _refresh_role(self, role_id: str, timeout: float) -> None:
         role = get_role(role_id)
         if role is None:
             logger.warning("Кнопка: роль %s не найдена", role_id)
             return
         complete = True
         try:
-            found = await asyncio.wait_for(collect_for_role(self.settings, role), NOW_COLLECT_TIMEOUT_SEC)
+            found = await asyncio.wait_for(collect_for_role(self.settings, role), timeout)
         except SourceLimited as exc:
             found, complete = exc.vacancies, False
             logger.warning("Кнопка: роль %s собрана не целиком: %s", role_id, exc)
         except Exception:
+            _now_failed_at[role_id] = time.monotonic()
             logger.exception("Кнопка: поиск по роли %s не удался — отдаём прежний сбор", role_id)
             return
+        if complete:
+            _now_failed_at.pop(role_id, None)
+        else:
+            # Неполный сбор сохраняем, но повторим не раньше чем через 10 минут.
+            _now_failed_at[role_id] = time.monotonic()
         previous = self.db.load_role_cache([role_id]).get(role_id, [])
         merged = {vacancy.uid: vacancy for vacancy in previous}
         for vacancy in found:
