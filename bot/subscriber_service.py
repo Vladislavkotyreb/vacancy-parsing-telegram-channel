@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Iterable, Optional
+from datetime import datetime, timezone
+from typing import Iterable, Optional, Union
 
 try:
     from zoneinfo import ZoneInfo
@@ -13,7 +14,7 @@ except ImportError:
 
 from aiogram import Bot
 from aiogram.enums import ParseMode
-from aiogram.types import InlineKeyboardMarkup, Message
+from aiogram.types import InlineKeyboardMarkup, Message, ReplyKeyboardMarkup
 from aiogram.exceptions import (
     ClientDecodeError,
     TelegramForbiddenError,
@@ -33,9 +34,45 @@ from bot.roles import get_role
 from bot.russian import format_digest_roles_label
 from bot.subscriber_collect import SourceLimited, collect_for_role, shared_feeds
 from bot.formatters import format_vacancy
+from bot.menu import main_menu_keyboard
 from bot.subscriber_formatters import format_empty_notice, format_subscriber_digest
 
 logger = logging.getLogger(__name__)
+
+# Кнопка «Вакансии сейчас» ищет заново роли, собранные раньше этого срока;
+# более свежий сбор (утренний или по чужому нажатию) берётся как есть.
+NOW_FRESH_SEC = 30 * 60
+# Поиск по роли не удался (таймаут, сбой) — не повторяем его столько времени,
+# иначе при медленном HH каждое нажатие снова ждало бы до упора.
+NOW_RETRY_AFTER_FAIL_SEC = 10 * 60
+# Предел на одну роль и на всё нажатие: дольше — отдаём то, что уже есть.
+NOW_COLLECT_TIMEOUT_SEC = 60
+NOW_SEARCH_BUDGET_SEC = 90
+NOW_MIN_ROLE_SEC = 30
+# Сколько ждать, пока закончится чужой поиск; дольше — отдаём последний сбор.
+NOW_LOCK_WAIT_SEC = 15
+# В это время (по часам бота) идут утренний сбор и рассылка: кнопка не ходит
+# на HH, чтобы не делить с рассылкой лимит запросов, и раздаёт последний сбор.
+NOW_QUIET_FROM = (9, 55)
+NOW_QUIET_TO = (10, 45)
+# Один живой поиск на процесс бота: бережём HH и лимит процессов хостинга.
+# Второе нажатие ждёт и берёт результат первого, а не ищет то же самое снова.
+_now_collect_lock: Optional[tuple] = None  # (цикл событий, замок)
+_now_failed_at: dict = {}  # роль → time.monotonic() неудачного поиска
+
+
+def is_quiet_time(hour: int, minute: int) -> bool:
+    """Окно утреннего сбора и рассылки, когда кнопка не ходит на HH."""
+    return NOW_QUIET_FROM <= (hour, minute) < NOW_QUIET_TO
+
+
+def _collect_lock() -> asyncio.Lock:
+    """Замок на текущий цикл событий: в Python 3.8 замок привязан к циклу, где создан."""
+    global _now_collect_lock
+    loop = asyncio.get_event_loop()
+    if _now_collect_lock is None or _now_collect_lock[0] is not loop:
+        _now_collect_lock = (loop, asyncio.Lock())
+    return _now_collect_lock[1]
 
 # Больше — не в один день. У нового подписчика «новые» — все вакансии за 72 ч:
 # у продакт-менеджера их ~240, это ~20 сообщений подряд и повод отписаться.
@@ -85,6 +122,16 @@ class SubscriberService:
         cache, failed_roles, limited_roles = await self._collect_roles_once(
             self._needed_roles(subscribers)
         )
+        try:
+            # Несобравшиеся роли не трогаем: пусть кнопка раздаёт их прошлый сбор,
+            # а не честное на вид, но ложное «всё свежее ты уже получил».
+            self.db.save_role_cache(
+                {role: vacancies for role, vacancies in cache.items() if role not in failed_roles},
+                limited_roles,
+            )
+        except Exception:
+            # Кнопка «Вакансии сейчас» тогда раздаст вчерашний сбор — рассылку не трогаем.
+            logger.exception("Не сохранил сбор для кнопки «Вакансии сейчас»")
         stats = DigestStats(
             subscribers=len(subscribers),
             roles_collected=len(cache),
@@ -325,6 +372,121 @@ class SubscriberService:
         )
         return cache, failed, limited
 
+    def in_quiet_window(self) -> bool:
+        now = datetime.now(ZoneInfo(self.settings.timezone))
+        return is_quiet_time(now.hour, now.minute)
+
+    def roles_to_search(self, user_id: int) -> list:
+        """Роли подписчика, которые кнопка будет искать заново (пусто — раздаём последний сбор)."""
+        if self.in_quiet_window():
+            return []
+        role_ids = self.db.get_subscriber_roles(user_id)
+        if not role_ids:
+            return []
+        info = self.db.role_cache_info(role_ids)
+        now = datetime.now(timezone.utc)
+        mono = time.monotonic()
+        result = []
+        for role_id in role_ids:
+            failed_at = _now_failed_at.get(role_id)
+            if failed_at is not None and mono - failed_at < NOW_RETRY_AFTER_FAIL_SEC:
+                continue
+            collected = info.get(role_id)
+            if collected is None or not collected[1] or (now - collected[0]).total_seconds() > NOW_FRESH_SEC:
+                result.append(role_id)
+        return result
+
+    async def refresh_for_user(self, user_id: int) -> None:
+        """Кнопка «Вакансии сейчас»: заново собрать устаревшие роли подписчика.
+
+        Свежий (до 30 мин) и полный сбор роли не повторяется. Новый сбор
+        объединяется с прежним: если площадка не ответила, прежние вакансии не
+        теряются. Сбой, таймаут, занятый поиск — отдаём последний сбор.
+        """
+        if not self.roles_to_search(user_id):
+            return
+        lock = _collect_lock()
+        # shield + ручная уборка: в Python 3.8 отмена wait_for после успешного
+        # acquire оставляла замок занятым навсегда.
+        acquiring = asyncio.ensure_future(lock.acquire())
+        try:
+            await asyncio.wait_for(asyncio.shield(acquiring), NOW_LOCK_WAIT_SEC)
+        except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
+            if acquiring.done() and not acquiring.cancelled() and acquiring.exception() is None:
+                lock.release()
+            else:
+                acquiring.cancel()
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            logger.info("Кнопка: идёт чужой поиск — пользователю %s отдаём последний сбор", user_id)
+            return
+        try:
+            # Проверяем после ожидания: пока ждали, роль мог собрать другой пользователь.
+            stale = self.roles_to_search(user_id)
+            loop = asyncio.get_event_loop()
+            deadline = loop.time() + NOW_SEARCH_BUDGET_SEC
+            with shared_feeds():
+                for role_id in stale:
+                    left = deadline - loop.time()
+                    # Роль, которой не хватит времени, не начинаем: таймаут пометил бы
+                    # её неудачной на 10 минут без её вины.
+                    if left < NOW_MIN_ROLE_SEC:
+                        logger.info("Кнопка: время на поиск вышло, роль %s не искали", role_id)
+                        break
+                    await self._refresh_role(role_id, min(left, NOW_COLLECT_TIMEOUT_SEC))
+        finally:
+            lock.release()
+
+    async def _refresh_role(self, role_id: str, timeout: float) -> None:
+        role = get_role(role_id)
+        if role is None:
+            logger.warning("Кнопка: роль %s не найдена", role_id)
+            return
+        complete = True
+        try:
+            found = await asyncio.wait_for(collect_for_role(self.settings, role), timeout)
+        except SourceLimited as exc:
+            found, complete = exc.vacancies, False
+            logger.warning("Кнопка: роль %s собрана не целиком: %s", role_id, exc)
+        except Exception:
+            _now_failed_at[role_id] = time.monotonic()
+            logger.exception("Кнопка: поиск по роли %s не удался — отдаём прежний сбор", role_id)
+            return
+        if complete:
+            _now_failed_at.pop(role_id, None)
+        else:
+            # Неполный сбор сохраняем, но повторим не раньше чем через 10 минут.
+            _now_failed_at[role_id] = time.monotonic()
+        previous = self.db.load_role_cache([role_id]).get(role_id, [])
+        merged = {vacancy.uid: vacancy for vacancy in previous}
+        for vacancy in found:
+            merged[vacancy.uid] = vacancy
+        # Протухшие не храним — кэш не растёт от нажатия к нажатию.
+        kept = self._filter_fresh(merged.values())
+        try:
+            self.db.save_role_cache({role_id: kept}, [] if complete else [role_id])
+        except Exception:
+            logger.exception("Кнопка: не сохранил сбор роли %s", role_id)
+
+    async def send_now(self, user_id: int) -> str:
+        """Кнопка «Вакансии сейчас»: непросмотренные свежие вакансии из последнего сбора.
+
+        Сам поиск — refresh_for_user (вызывается до этого). Возвращает исход
+        для ответа в чат: not_subscribed / no_cache / nothing_new / sent.
+        """
+        role_ids = self.db.get_subscriber_roles(user_id)
+        if not role_ids:
+            return "not_subscribed"
+        cache = self.db.load_role_cache(role_ids)
+        if not cache:
+            return "no_cache"
+        region = self.db.get_region(user_id)
+        vacancies, fresh = self._merge_for_roles(cache, role_ids, region)
+        if not dedupe_across_sources(self.db.unsent_to_subscriber(user_id, fresh)):
+            return "nothing_new"
+        await self._send_to_user(user_id, role_ids, fresh, len(vacancies), region=region)
+        return "sent"
+
     def _merge_for_roles(
         self, cache: dict[str, list[Vacancy]], role_ids: list[str], region: str = "cis"
     ) -> tuple[list[Vacancy], list[Vacancy]]:
@@ -398,6 +560,10 @@ class SubscriberService:
         for index, message in enumerate(messages):
             is_last = index == len(messages) - 1
             markup = more if is_last else None
+            if markup is None and index == 0:
+                # Первое сообщение несёт актуальное нижнее меню — так подписчики,
+                # которые ничего не нажимают, тоже увидят новые кнопки.
+                markup = main_menu_keyboard(subscribed=True)
             delivered = await self._safe_send(user_id, message, markup) or delivered
             # Отмечаем сразу после каждого сообщения: если второе не дойдёт или
             # процесс оборвут, первое завтра не придёт повторно.
@@ -436,7 +602,7 @@ class SubscriberService:
             logger.info("Подписчик %s roles=%s: «новых нет» сегодня уже уходило", user_id, roles)
             return 0, False
 
-        delivered = await self._safe_send(user_id, text)
+        delivered = await self._safe_send(user_id, text, main_menu_keyboard(subscribed=True))
         self.db.mark_empty_notice(user_id, today)
         self._remember_profile(user_id, delivered)
         logger.info("Подписчик %s roles=%s: новых нет — отправили уведомление", user_id, roles)
@@ -460,7 +626,7 @@ class SubscriberService:
             logger.exception("Не удалось сохранить профиль подписчика %s", user_id)
 
     async def _safe_send(
-        self, chat_id: int, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None
+        self, chat_id: int, text: str, reply_markup: Optional[Union[InlineKeyboardMarkup, ReplyKeyboardMarkup]] = None
     ) -> Optional[Message]:
         retries = 0
         flood_waits = 0

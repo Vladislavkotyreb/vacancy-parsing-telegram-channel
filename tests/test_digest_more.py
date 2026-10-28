@@ -103,7 +103,9 @@ class DigestMoreTest(unittest.IsolatedAsyncioTestCase):
     async def test_small_digest_has_no_button(self):
         self.found = self.found[:5]
         await self.run_digest()
-        self.assertTrue(all(c.kwargs.get("reply_markup") is None for c in self.calls()))
+        from aiogram.types import InlineKeyboardMarkup
+        # Кнопки «Показать остальные» нет; нижнее меню (ReplyKeyboard) — есть, это нормально.
+        self.assertFalse(any(isinstance(c.kwargs.get("reply_markup"), InlineKeyboardMarkup) for c in self.calls()))
 
     async def test_overflow_is_not_marked_sent_by_digest(self):
         await self.run_digest()
