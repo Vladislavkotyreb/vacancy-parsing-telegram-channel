@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterable, Optional, Union
 
 try:
@@ -37,6 +37,24 @@ from bot.menu import main_menu_keyboard
 from bot.subscriber_formatters import format_empty_notice, format_subscriber_digest
 
 logger = logging.getLogger(__name__)
+
+# Кнопка «Вакансии сейчас» ищет заново роли, собранные раньше этого срока;
+# более свежий сбор (утренний или по чужому нажатию) берётся как есть.
+NOW_FRESH_SEC = 30 * 60
+# Сколько ждём поиска по одной роли; не успели — отдаём последний сбор.
+NOW_COLLECT_TIMEOUT_SEC = 120
+# Один живой поиск на процесс бота: бережём HH и лимит процессов хостинга.
+# Второе нажатие ждёт и берёт результат первого, а не ищет то же самое снова.
+_now_collect_lock: Optional[tuple] = None  # (цикл событий, замок)
+
+
+def _collect_lock() -> asyncio.Lock:
+    """Замок на текущий цикл событий: в Python 3.8 замок привязан к циклу, где создан."""
+    global _now_collect_lock
+    loop = asyncio.get_event_loop()
+    if _now_collect_lock is None or _now_collect_lock[0] is not loop:
+        _now_collect_lock = (loop, asyncio.Lock())
+    return _now_collect_lock[1]
 
 # Больше — не в один день. У нового подписчика «новые» — все вакансии за 72 ч:
 # у продакт-менеджера их ~240, это ~20 сообщений подряд и повод отписаться.
@@ -336,12 +354,60 @@ class SubscriberService:
         )
         return cache, failed, limited
 
-    async def send_now(self, user_id: int) -> str:
-        """Кнопка «Вакансии сейчас»: свежие непросмотренные вакансии из утреннего сбора.
+    async def refresh_for_user(self, user_id: int) -> None:
+        """Кнопка «Вакансии сейчас»: заново собрать устаревшие роли подписчика.
 
-        HH и площадки заново не опрашиваются — ответ мгновенный и не нагружает
-        ни HH, ни лимит процессов хостинга. Возвращает исход для ответа в чат:
-        not_subscribed / no_cache / nothing_new / sent.
+        Роль, собранная меньше NOW_FRESH_SEC назад, не ищется повторно. Новый
+        сбор объединяется с прежним: если площадка не ответила, прежние
+        вакансии не теряются. Любой сбой — пишем в лог и отдаём прежний сбор.
+        """
+        role_ids = self.db.get_subscriber_roles(user_id)
+        if not role_ids:
+            return
+        async with _collect_lock():
+            # Проверяем после ожидания: пока ждали, роль мог собрать другой пользователь.
+            now = datetime.now(timezone.utc)
+            times = self.db.role_cache_times(role_ids)
+            stale = [
+                role_id for role_id in role_ids
+                if role_id not in times or (now - times[role_id]).total_seconds() > NOW_FRESH_SEC
+            ]
+            if not stale:
+                return
+            with shared_feeds():
+                for role_id in stale:
+                    await self._refresh_role(role_id)
+
+    async def _refresh_role(self, role_id: str) -> None:
+        role = get_role(role_id)
+        if role is None:
+            logger.warning("Кнопка: роль %s не найдена", role_id)
+            return
+        complete = True
+        try:
+            found = await asyncio.wait_for(collect_for_role(self.settings, role), NOW_COLLECT_TIMEOUT_SEC)
+        except SourceLimited as exc:
+            found, complete = exc.vacancies, False
+            logger.warning("Кнопка: роль %s собрана не целиком: %s", role_id, exc)
+        except Exception:
+            logger.exception("Кнопка: поиск по роли %s не удался — отдаём прежний сбор", role_id)
+            return
+        previous = self.db.load_role_cache([role_id]).get(role_id, [])
+        merged = {vacancy.uid: vacancy for vacancy in previous}
+        for vacancy in found:
+            merged[vacancy.uid] = vacancy
+        # Протухшие не храним — кэш не растёт от нажатия к нажатию.
+        kept = self._filter_fresh(merged.values())
+        try:
+            self.db.save_role_cache({role_id: kept}, [] if complete else [role_id])
+        except Exception:
+            logger.exception("Кнопка: не сохранил сбор роли %s", role_id)
+
+    async def send_now(self, user_id: int) -> str:
+        """Кнопка «Вакансии сейчас»: непросмотренные свежие вакансии из последнего сбора.
+
+        Сам поиск — refresh_for_user (вызывается до этого). Возвращает исход
+        для ответа в чат: not_subscribed / no_cache / nothing_new / sent.
         """
         role_ids = self.db.get_subscriber_roles(user_id)
         if not role_ids:

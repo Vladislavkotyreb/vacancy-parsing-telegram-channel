@@ -70,10 +70,12 @@ PID_FILE = Path(__file__).resolve().parent.parent / "logs" / "chat-bot.pid"
 NOW_COOLDOWN_SEC = 60
 NOW_TEXTS = {
     "not_subscribed": "Сначала выбери роли — кнопка «Выбрать роли» внизу.",
-    "no_cache": "Вакансии ещё собираются — первая подборка придёт с утренней рассылкой.",
-    "nothing_new": "Новых вакансий пока нет — всё свежее ты уже получил.\nУтром проверю снова.",
+    "no_cache": "Площадки сейчас не отвечают — попробуй через несколько минут.",
+    "nothing_new": "Новых вакансий пока нет — всё свежее ты уже получил.\nЗагляни позже или дождись утренней подборки.",
     "digest_running": "Утренняя рассылка идёт прямо сейчас — подборка придёт через пару минут.",
 }
+NOW_SEARCHING_TEXT = "🔎 Ищу новые вакансии по твоим ролям — это займёт до минуты…"
+NOW_COOLDOWN_TEXT = "Только что искал — попробуй через минуту."
 DIGEST_LOCK = Path(__file__).resolve().parent.parent / "logs" / "digest.lock"
 
 
@@ -515,21 +517,44 @@ _now_pressed_at: dict[int, float] = {}
 
 @router.message(F.text == BTN_NOW)
 async def btn_now(message: Message, db: VacancyDatabase, settings: Settings, bot: Bot) -> None:
-    """Свежие вакансии по своим ролям прямо сейчас — из утреннего сбора, HH заново не опрашиваем."""
+    """Новые вакансии по ролям прямо сейчас: бот ищет на площадках и присылает то, чего ещё не было.
+
+    Роль, которую искали меньше 30 минут назад (утром или по чужому нажатию),
+    заново не ищется — берётся этот сбор. Поиски идут по одному на весь бот.
+    """
     if not message.from_user:
         return
     user_id = message.from_user.id
     now = time.monotonic()
     lock = user_lock(user_id)
     if lock.locked() or now - _now_pressed_at.get(user_id, -NOW_COOLDOWN_SEC) < NOW_COOLDOWN_SEC:
-        await message.answer("Только что отправил — новые вакансии появятся утром.")
+        await message.answer(NOW_COOLDOWN_TEXT)
         return
     if _digest_running():
         await message.answer(NOW_TEXTS["digest_running"])
         return
     _now_pressed_at[user_id] = now
+    service = SubscriberService(settings, db, bot)
     async with lock:
-        outcome = await SubscriberService(settings, db, bot).send_now(user_id)
+        if not db.get_subscriber_roles(user_id):
+            outcome = "not_subscribed"
+        else:
+            searching = None
+            try:
+                searching = await message.answer(NOW_SEARCHING_TEXT)
+            except Exception:
+                logger.warning("Кнопка: не отправил «ищу» пользователю %s", user_id)
+            await service.refresh_for_user(user_id)
+            if searching is not None:
+                try:
+                    await searching.delete()
+                except Exception:
+                    pass
+            # Пока искали, могла начаться утренняя рассылка — тогда не дублируем её.
+            if _digest_running():
+                outcome = "digest_running"
+            else:
+                outcome = await service.send_now(user_id)
     if outcome in NOW_TEXTS:
         subscribed = outcome != "not_subscribed"
         await message.answer(NOW_TEXTS[outcome], reply_markup=main_menu_keyboard(subscribed))

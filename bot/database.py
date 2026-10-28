@@ -842,6 +842,25 @@ class VacancyDatabase:
                 rows,
             )
 
+    def role_cache_times(self, roles: Iterable[str]) -> dict:
+        """{роль: когда собрана (UTC)} — кнопка ищет заново только устаревшие роли."""
+        roles = list(roles)
+        if not roles:
+            return {}
+        marks = ",".join("?" for _ in roles)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT role, collected_at FROM role_cache WHERE role IN ({marks})", roles
+            ).fetchall()
+        result = {}
+        for row in rows:
+            try:
+                moment = datetime.fromisoformat(row["collected_at"])
+            except (TypeError, ValueError):
+                continue
+            result[row["role"]] = moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+        return result
+
     def load_role_cache(self, roles: Iterable[str]) -> dict:
         """{роль: [Vacancy]} для ролей, по которым есть сохранённый сбор."""
         roles = list(roles)
