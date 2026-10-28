@@ -175,6 +175,14 @@ class BroadcastVideoTest(unittest.IsolatedAsyncioTestCase):
         self.bot.send_animation.assert_not_awaited()
         self.bot.send_message.assert_awaited_once()
 
+    def test_video_size_is_read_from_file(self):
+        from bot.broadcast import mp4_size
+        for path in Path("broadcasts").glob("*.mp4"):
+            width, height = mp4_size(path)
+            self.assertTrue(width and height, path)
+            self.assertLessEqual(height / width, 1.25 + 1e-6, f"{path}: выше 4:5 — Телеграм обрежет в чате")
+        self.assertEqual(mp4_size(self.dir / "2026-10-29-now.mp4"), (None, None))  # не mp4 — без размера
+
     def test_too_long_caption_is_rejected(self):
         from bot.broadcast import find_video
         path = self.dir / "2026-10-29-now.html"

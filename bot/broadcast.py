@@ -58,6 +58,27 @@ class BroadcastVideo:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.file_id: Optional[str] = None
+        # Размер — из самого файла: неверный размер Телеграм показывает с обрезкой.
+        self.width, self.height = mp4_size(path)
+
+
+def mp4_size(path: Path) -> tuple[Optional[int], Optional[int]]:
+    """Ширина и высота видео из заголовка mp4 (atom tkhd); не нашли — (None, None)."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None, None
+    at = data.find(b"tkhd")
+    while at != -1:
+        size = int.from_bytes(data[at - 4:at], "big")
+        box = data[at - 4:at - 4 + size]
+        if len(box) >= 92:
+            width = int.from_bytes(box[-8:-4], "big") >> 16
+            height = int.from_bytes(box[-4:], "big") >> 16
+            if width and height:
+                return width, height
+        at = data.find(b"tkhd", at + 4)
+    return None, None
 
 
 def load_broadcast(path: Path) -> tuple[str, str]:
@@ -103,8 +124,8 @@ async def _send(
                 animation=video.file_id or FSInputFile(video.path),
                 caption=text,
                 parse_mode=ParseMode.HTML,
-                width=1080,
-                height=1920,
+                width=video.width,
+                height=video.height,
                 reply_markup=reply_markup,
             )
             if video.file_id is None:
