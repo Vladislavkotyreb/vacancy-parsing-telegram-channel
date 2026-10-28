@@ -70,9 +70,30 @@ PID_FILE = Path(__file__).resolve().parent.parent / "logs" / "chat-bot.pid"
 NOW_COOLDOWN_SEC = 60
 NOW_TEXTS = {
     "not_subscribed": "Сначала выбери роли — кнопка «Выбрать роли» внизу.",
-    "no_cache": "Вакансии ещё собираются — первая подборка придёт с утренней рассылкой в 10:15 (МСК).",
-    "nothing_new": "Новых вакансий пока нет — всё свежее за 3 дня ты уже получил.\nУтром в 10:15 проверю снова.",
+    "no_cache": "Вакансии ещё собираются — первая подборка придёт с утренней рассылкой.",
+    "nothing_new": "Новых вакансий пока нет — всё свежее ты уже получил.\nУтром проверю снова.",
+    "digest_running": "Утренняя рассылка идёт прямо сейчас — подборка придёт через пару минут.",
 }
+DIGEST_LOCK = Path(__file__).resolve().parent.parent / "logs" / "digest.lock"
+
+
+def _digest_running() -> bool:
+    """Утренняя рассылка держит flock на logs/digest.lock (bot/run_once.py) всё время работы.
+
+    Пока она идёт, кнопку не обслуживаем: рассылка отмечает вакансии после
+    отправки, и нажатие в эти секунды прислало бы часть подборки дважды.
+    """
+    import fcntl
+
+    if not DIGEST_LOCK.exists():
+        return False
+    try:
+        with open(DIGEST_LOCK, "a") as handle:
+            fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        return False
+    except OSError:
+        return True
 
 S0_REGION = "s0:reg:"  # s0:reg:<cis|world|both>
 S1_CAT = "s1:cat:"
@@ -502,6 +523,9 @@ async def btn_now(message: Message, db: VacancyDatabase, settings: Settings, bot
     lock = user_lock(user_id)
     if lock.locked() or now - _now_pressed_at.get(user_id, -NOW_COOLDOWN_SEC) < NOW_COOLDOWN_SEC:
         await message.answer("Только что отправил — новые вакансии появятся утром.")
+        return
+    if _digest_running():
+        await message.answer(NOW_TEXTS["digest_running"])
         return
     _now_pressed_at[user_id] = now
     async with lock:

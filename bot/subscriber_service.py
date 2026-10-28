@@ -87,7 +87,12 @@ class SubscriberService:
             self._needed_roles(subscribers)
         )
         try:
-            self.db.save_role_cache(cache, failed_roles + limited_roles)
+            # Несобравшиеся роли не трогаем: пусть кнопка раздаёт их прошлый сбор,
+            # а не честное на вид, но ложное «всё свежее ты уже получил».
+            self.db.save_role_cache(
+                {role: vacancies for role, vacancies in cache.items() if role not in failed_roles},
+                limited_roles,
+            )
         except Exception:
             # Кнопка «Вакансии сейчас» тогда раздаст вчерашний сбор — рассылку не трогаем.
             logger.exception("Не сохранил сбор для кнопки «Вакансии сейчас»")

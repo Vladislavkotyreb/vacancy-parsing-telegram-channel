@@ -140,3 +140,33 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFixesTest(VacanciesNowTest):
+    """Независимое ревью 28.10.2026."""
+
+    async def test_button_waits_while_morning_digest_runs(self):
+        import fcntl
+        lock_path = Path(tempfile.mkdtemp()) / "digest.lock"
+        with mock.patch.object(chat_main, "DIGEST_LOCK", lock_path):
+            holder = open(lock_path, "w")
+            fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)  # как run_once
+            self.db.save_role_cache({"backend_python": [_v(1)]}, [])
+            self.db.set_subscriber_roles(10, ["backend_python"])
+            msg = SimpleNamespace(text=BTN_NOW, from_user=SimpleNamespace(id=10), answer=AsyncMock())
+            await chat_main.btn_now(msg, self.db, self.settings, self.bot)
+            self.assertIn("рассылка идёт прямо сейчас", msg.answer.await_args.args[0])
+            self.assertEqual(self.bot.calls, [])
+            holder.close()
+            await chat_main.btn_now(msg, self.db, self.settings, self.bot)
+            self.assertTrue(self.bot.calls, "после рассылки кнопка работает")
+
+    async def test_failed_role_keeps_previous_cache(self):
+        self.db.save_role_cache({"backend_python": [_v(1)]}, [])
+        self.db.set_subscriber_roles(10, ["backend_python"])
+
+        async def collect(settings, role):
+            raise RuntimeError("HH лежит")
+        with mock.patch("bot.subscriber_service.collect_for_role", side_effect=collect):
+            await self.service.run_daily_digests()
+        self.assertEqual([v.uid for v in self.db.load_role_cache(["backend_python"])["backend_python"]], ["hh.ru:1"])
