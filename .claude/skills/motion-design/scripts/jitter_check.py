@@ -1,7 +1,7 @@
 """Проверка плавности: вертикальный сдвиг между соседними кадрами (фазовая корреляция, субпиксель).
 
 python3 jitter_check.py frames/ 230 380 --crop 230,900,700,1450   # номера = порядковые номера файлов в папке
-Сравнивает сдвиг каждого кадра со сглаженным рядом (окно 7 кадров).
+Сравнивает сдвиг каждого кадра с локальной параболой (окно 7 кадров).
 Отклонение ≤0.3 px — глазом не видно; >0.5 px — заметное дрожание
 (браузер округляет сдвиг до пикселя → рендерить в 2x, при необходимости 3x).
 """
@@ -26,9 +26,15 @@ def main():
         return np.asarray(im.crop(crop) if crop else im, dtype=float)
     s = [shift(load(i), load(i + 1)) for i in range(a, b)]
     print(' '.join(f'{v:.2f}' for v in s))
-    s = np.array(s); k = 7
-    smooth = np.convolve(np.pad(s, k // 2, mode='edge'), np.ones(k) / k, mode='valid')
-    dev = np.abs(s - smooth)
+    # Сравниваем с локальной параболой по 7 кадрам: она повторяет разгон и торможение,
+    # а скользящее среднее срезало бы пики скорости и давало ложное «дрожит».
+    s = np.array(s); k = 3
+    dev = np.zeros_like(s)
+    for i in range(len(s)):
+        lo, hi = max(0, i - k), min(len(s), i + k + 1)
+        x = np.arange(lo, hi)
+        fit = np.polyval(np.polyfit(x, s[lo:hi], 2 if hi - lo > 3 else 1), i)
+        dev[i] = abs(s[i] - fit)
     verdict = 'плавно' if dev.max() <= 0.3 else ('почти плавно' if dev.max() <= 0.5 else 'ДРОЖИТ')
     print(f'отклонение от плавного: среднее {dev.mean():.2f} px, максимум {dev.max():.2f} px — {verdict}')
 
