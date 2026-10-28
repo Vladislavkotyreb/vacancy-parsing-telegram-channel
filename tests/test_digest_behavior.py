@@ -149,7 +149,7 @@ class DigestBehaviourTest(unittest.IsolatedAsyncioTestCase):
         self.db.set_subscriber_roles(10, ["product_designer"])
         stats = await self.run_digest()
         self.assertEqual(stats.empty_notices, 0)
-        self.assertIn("2 новых вакансий", self.texts()[0])
+        self.assertIn("2 новых вакансии", self.texts()[0])
 
 
 if __name__ == "__main__":

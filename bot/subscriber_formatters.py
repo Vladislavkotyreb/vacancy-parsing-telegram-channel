@@ -5,6 +5,7 @@ from typing import Optional
 from bot.models import Vacancy
 from bot.regions import CIS, DEFAULT_REGION, WORLD, normalize_region
 from bot.roles import get_role
+from bot.russian import plural_ru
 from bot.formatters import (
     build_paginated_digest,
     escape_html,
@@ -42,7 +43,8 @@ def format_subscriber_header(
     region: str = DEFAULT_REGION,
 ) -> str:
     header = (
-        f"✨ <b>{new_count} новых вакансий</b> {escape_html(role_label)} "
+        f"✨ <b>{new_count} {plural_ru(new_count, 'новая', 'новых', 'новых')} "
+        f"{plural_ru(new_count, 'вакансия', 'вакансии', 'вакансий')}</b> {escape_html(role_label)} "
         f"(за последние {max_age_hours} ч)\n"
         f"{_sources_line(region)}"
     )
