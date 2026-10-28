@@ -52,7 +52,7 @@ end 8.6       ≥1 с покоя в конце
 
 ### 5. Рендер и проверка плавности
 `scripts/render.js` — **deviceScaleFactor 2**, затем ffmpeg `scale=1080:1920:flags=lanczos`, H.264 crf 16, yuv420p, faststart.
-Потом `scripts/jitter_check.py` на участке скролла: ряд сдвигов должен расти/падать монотонно. «Пила» = дрожание текста → см. pitfalls.md.
+Потом `scripts/jitter_check.py` на участке скролла: максимум отклонения ≤0.3 px — плавно; >0.5 px — дрожит → см. pitfalls.md.
 
 ### 6. After Effects
 Не переписывай UI текстовыми слоями AE — шрифты и эмодзи разъедутся с превью. Делай так:

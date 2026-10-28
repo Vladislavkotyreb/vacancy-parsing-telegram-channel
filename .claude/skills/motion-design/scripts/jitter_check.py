@@ -1,8 +1,9 @@
 """Проверка плавности: вертикальный сдвиг между соседними кадрами (фазовая корреляция, субпиксель).
 
-python3 jitter_check.py frames/ 230 380 --crop 230,900,700,1450
-Плавное движение — монотонный ряд без скачков (0.9 1.0 1.1 1.2 …).
-Дрожание — «пила» (0.5 0.1 0.6 0.2 …): браузер округляет сдвиг до пикселя → рендерить в 2x.
+python3 jitter_check.py frames/ 230 380 --crop 230,900,700,1450   # номера = порядковые номера файлов в папке
+Сравнивает сдвиг каждого кадра со сглаженным рядом (окно 7 кадров).
+Отклонение ≤0.3 px — глазом не видно; >0.5 px — заметное дрожание
+(браузер округляет сдвиг до пикселя → рендерить в 2x, при необходимости 3x).
 """
 import sys, glob, numpy as np
 from PIL import Image
@@ -25,8 +26,11 @@ def main():
         return np.asarray(im.crop(crop) if crop else im, dtype=float)
     s = [shift(load(i), load(i + 1)) for i in range(a, b)]
     print(' '.join(f'{v:.2f}' for v in s))
-    d = np.diff(s); flips = int(np.sum(np.sign(d[1:]) != np.sign(d[:-1])))
-    print(f'смен направления ускорения: {flips} из {len(d) - 1} — больше ~20% = дрожание')
+    s = np.array(s); k = 7
+    smooth = np.convolve(np.pad(s, k // 2, mode='edge'), np.ones(k) / k, mode='valid')
+    dev = np.abs(s - smooth)
+    verdict = 'плавно' if dev.max() <= 0.3 else ('почти плавно' if dev.max() <= 0.5 else 'ДРОЖИТ')
+    print(f'отклонение от плавного: среднее {dev.mean():.2f} px, максимум {dev.max():.2f} px — {verdict}')
 
 if __name__ == '__main__':
     main()
