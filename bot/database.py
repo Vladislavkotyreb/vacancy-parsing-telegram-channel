@@ -151,6 +151,16 @@ class VacancyDatabase:
                 -- только последняя подборка; digest_day — её дата по TIMEZONE.
                 -- Где искать: cis / world / both (bot/regions.py). Отдельно от ролей:
                 -- регион выбирают первым шагом /start, ещё до подписки.
+                -- Вакансии утреннего сбора по ролям — для кнопки «Вакансии сейчас»:
+                -- она раздаёт их из базы, не опрашивая HH заново. Перезаписывается
+                -- каждым утренним сбором; complete = 0 — роль собрана не целиком.
+                CREATE TABLE IF NOT EXISTS role_cache (
+                    role TEXT PRIMARY KEY,
+                    collected_at TEXT NOT NULL,
+                    complete INTEGER NOT NULL,
+                    vacancies_json TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS user_region (
                     user_id INTEGER PRIMARY KEY,
                     region TEXT NOT NULL,
@@ -813,6 +823,39 @@ class VacancyDatabase:
                 """,
                 (user_id, normalize_region(region), now),
             )
+
+    def save_role_cache(self, cache: dict, incomplete: Iterable[str]) -> None:
+        """Сбор всех ролей одной транзакцией: кнопка видит либо вчерашний, либо сегодняшний."""
+        now = datetime.now(timezone.utc).isoformat()
+        partial = set(incomplete)
+        rows = [
+            (role, now, int(role not in partial), "[" + ",".join(_vacancy_to_json(v) for v in vacancies) + "]")
+            for role, vacancies in cache.items()
+        ]
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO role_cache (role, collected_at, complete, vacancies_json) VALUES (?, ?, ?, ?)
+                ON CONFLICT(role) DO UPDATE SET collected_at = excluded.collected_at,
+                    complete = excluded.complete, vacancies_json = excluded.vacancies_json
+                """,
+                rows,
+            )
+
+    def load_role_cache(self, roles: Iterable[str]) -> dict:
+        """{роль: [Vacancy]} для ролей, по которым есть сохранённый сбор."""
+        roles = list(roles)
+        if not roles:
+            return {}
+        marks = ",".join("?" for _ in roles)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT role, vacancies_json FROM role_cache WHERE role IN ({marks})", roles
+            ).fetchall()
+        return {
+            row["role"]: [_vacancy_from_json(json.dumps(item)) for item in json.loads(row["vacancies_json"])]
+            for row in rows
+        }
 
     def replace_digest_overflow(self, user_id: int, day: str, vacancies: list[Vacancy]) -> None:
         """Остаток подборки вместо прежнего; пустой список — просто стереть прежний."""

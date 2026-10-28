@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
@@ -22,9 +23,7 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    KeyboardButton,
     Message,
-    ReplyKeyboardMarkup,
     TelegramObject,
 )
 
@@ -47,6 +46,15 @@ from bot.role_categories import CATEGORIES, CATEGORY_IDS, get_category
 from bot.regions import REGION_BUTTONS, normalize_region, region_phrase
 from bot.roles import ROLES
 from bot.russian import format_subscription_roles, format_success_roles
+from bot.menu import (
+    BTN_CHOOSE_ROLES,
+    BTN_CHOOSE_ROLES_AGAIN,
+    BTN_MY_SUBSCRIPTION,
+    BTN_NOW,
+    BTN_UNSUBSCRIBE,
+    main_menu_keyboard,
+)
+from bot.subscriber_service import SubscriberService
 from bot.stats import (
     USERS_PAGE_SIZE,
     format_admin_stats,
@@ -58,10 +66,13 @@ logger = logging.getLogger(__name__)
 router = Router()
 PID_FILE = Path(__file__).resolve().parent.parent / "logs" / "chat-bot.pid"
 
-BTN_MY_SUBSCRIPTION = "Мои вакансии"
-BTN_UNSUBSCRIBE = "Прекратить рассылку"
-BTN_CHOOSE_ROLES = "Выбрать роли"
-BTN_CHOOSE_ROLES_AGAIN = "Выбрать роли заново"
+# Повторное нажатие «Вакансии сейчас» раньше — просто подсказка, без новой выборки.
+NOW_COOLDOWN_SEC = 60
+NOW_TEXTS = {
+    "not_subscribed": "Сначала выбери роли — кнопка «Выбрать роли» внизу.",
+    "no_cache": "Вакансии ещё собираются — первая подборка придёт с утренней рассылкой в 10:15 (МСК).",
+    "nothing_new": "Новых вакансий пока нет — всё свежее за 3 дня ты уже получил.\nУтром в 10:15 проверю снова.",
+}
 
 S0_REGION = "s0:reg:"  # s0:reg:<cis|world|both>
 S1_CAT = "s1:cat:"
@@ -218,10 +229,6 @@ def _is_subscribed(user_id: int, db: VacancyDatabase) -> bool:
     return bool(subscriber and subscriber.get("roles"))
 
 
-def _choose_roles_button(subscribed: bool) -> str:
-    return BTN_CHOOSE_ROLES_AGAIN if subscribed else BTN_CHOOSE_ROLES
-
-
 def _saved_roles_for_category(saved_roles: list[str], category_id: str) -> list[str]:
     category = get_category(category_id)
     if not category:
@@ -251,18 +258,6 @@ def _draft_from_keyboard(markup: Optional[InlineKeyboardMarkup]) -> set[str]:
             if role_id:
                 draft.add(role_id)
     return draft
-
-
-def main_menu_keyboard(subscribed: bool = False) -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=BTN_MY_SUBSCRIPTION)],
-            [KeyboardButton(text=BTN_UNSUBSCRIBE)],
-            [KeyboardButton(text=_choose_roles_button(subscribed))],
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
-    )
 
 
 def region_keyboard(current: str) -> InlineKeyboardMarkup:
@@ -494,6 +489,28 @@ async def btn_choose_roles(message: Message, db: VacancyDatabase) -> None:
     await start_flow(message, db)
 
 
+_now_pressed_at: dict[int, float] = {}
+
+
+@router.message(F.text == BTN_NOW)
+async def btn_now(message: Message, db: VacancyDatabase, settings: Settings, bot: Bot) -> None:
+    """Свежие вакансии по своим ролям прямо сейчас — из утреннего сбора, HH заново не опрашиваем."""
+    if not message.from_user:
+        return
+    user_id = message.from_user.id
+    now = time.monotonic()
+    lock = user_lock(user_id)
+    if lock.locked() or now - _now_pressed_at.get(user_id, -NOW_COOLDOWN_SEC) < NOW_COOLDOWN_SEC:
+        await message.answer("Только что отправил — новые вакансии появятся утром.")
+        return
+    _now_pressed_at[user_id] = now
+    async with lock:
+        outcome = await SubscriberService(settings, db, bot).send_now(user_id)
+    if outcome in NOW_TEXTS:
+        subscribed = outcome != "not_subscribed"
+        await message.answer(NOW_TEXTS[outcome], reply_markup=main_menu_keyboard(subscribed))
+
+
 @router.message(F.text == BTN_MY_SUBSCRIPTION)
 async def btn_my_subscription(message: Message, db: VacancyDatabase) -> None:
     await send_subscription_info(message, db)
@@ -636,6 +653,7 @@ async def s2_save(callback: CallbackQuery, db: VacancyDatabase) -> None:
     await callback.message.edit_text(
         f"✅ Готово! Каждый день в <b>10:00 (МСК)</b> буду присылать "
         f"<b>{roles_text}</b> {region}.\n\n"
+        "Не хочешь ждать утра — нажми «🔎 Вакансии сейчас» внизу.\n"
         "Чтобы изменить другое направление — «Выбрать роли заново».",
         parse_mode="HTML",
     )

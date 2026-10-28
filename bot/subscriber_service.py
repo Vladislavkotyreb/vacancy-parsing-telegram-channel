@@ -4,7 +4,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Union
 
 try:
     from zoneinfo import ZoneInfo
@@ -13,7 +13,7 @@ except ImportError:
 
 from aiogram import Bot
 from aiogram.enums import ParseMode
-from aiogram.types import InlineKeyboardMarkup, Message
+from aiogram.types import InlineKeyboardMarkup, Message, ReplyKeyboardMarkup
 from aiogram.exceptions import (
     ClientDecodeError,
     TelegramForbiddenError,
@@ -33,6 +33,7 @@ from bot.roles import get_role
 from bot.russian import format_digest_roles_label
 from bot.subscriber_collect import SourceLimited, collect_for_role, shared_feeds
 from bot.formatters import format_vacancy
+from bot.menu import main_menu_keyboard
 from bot.subscriber_formatters import format_empty_notice, format_subscriber_digest
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,11 @@ class SubscriberService:
         cache, failed_roles, limited_roles = await self._collect_roles_once(
             self._needed_roles(subscribers)
         )
+        try:
+            self.db.save_role_cache(cache, failed_roles + limited_roles)
+        except Exception:
+            # Кнопка «Вакансии сейчас» тогда раздаст вчерашний сбор — рассылку не трогаем.
+            logger.exception("Не сохранил сбор для кнопки «Вакансии сейчас»")
         stats = DigestStats(
             subscribers=len(subscribers),
             roles_collected=len(cache),
@@ -325,6 +331,26 @@ class SubscriberService:
         )
         return cache, failed, limited
 
+    async def send_now(self, user_id: int) -> str:
+        """Кнопка «Вакансии сейчас»: свежие непросмотренные вакансии из утреннего сбора.
+
+        HH и площадки заново не опрашиваются — ответ мгновенный и не нагружает
+        ни HH, ни лимит процессов хостинга. Возвращает исход для ответа в чат:
+        not_subscribed / no_cache / nothing_new / sent.
+        """
+        role_ids = self.db.get_subscriber_roles(user_id)
+        if not role_ids:
+            return "not_subscribed"
+        cache = self.db.load_role_cache(role_ids)
+        if not cache:
+            return "no_cache"
+        region = self.db.get_region(user_id)
+        vacancies, fresh = self._merge_for_roles(cache, role_ids, region)
+        if not dedupe_across_sources(self.db.unsent_to_subscriber(user_id, fresh)):
+            return "nothing_new"
+        await self._send_to_user(user_id, role_ids, fresh, len(vacancies), region=region)
+        return "sent"
+
     def _merge_for_roles(
         self, cache: dict[str, list[Vacancy]], role_ids: list[str], region: str = "cis"
     ) -> tuple[list[Vacancy], list[Vacancy]]:
@@ -398,6 +424,10 @@ class SubscriberService:
         for index, message in enumerate(messages):
             is_last = index == len(messages) - 1
             markup = more if is_last else None
+            if markup is None and index == 0:
+                # Первое сообщение несёт актуальное нижнее меню — так подписчики,
+                # которые ничего не нажимают, тоже увидят новые кнопки.
+                markup = main_menu_keyboard(subscribed=True)
             delivered = await self._safe_send(user_id, message, markup) or delivered
             # Отмечаем сразу после каждого сообщения: если второе не дойдёт или
             # процесс оборвут, первое завтра не придёт повторно.
@@ -436,7 +466,7 @@ class SubscriberService:
             logger.info("Подписчик %s roles=%s: «новых нет» сегодня уже уходило", user_id, roles)
             return 0, False
 
-        delivered = await self._safe_send(user_id, text)
+        delivered = await self._safe_send(user_id, text, main_menu_keyboard(subscribed=True))
         self.db.mark_empty_notice(user_id, today)
         self._remember_profile(user_id, delivered)
         logger.info("Подписчик %s roles=%s: новых нет — отправили уведомление", user_id, roles)
@@ -460,7 +490,7 @@ class SubscriberService:
             logger.exception("Не удалось сохранить профиль подписчика %s", user_id)
 
     async def _safe_send(
-        self, chat_id: int, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None
+        self, chat_id: int, text: str, reply_markup: Optional[Union[InlineKeyboardMarkup, ReplyKeyboardMarkup]] = None
     ) -> Optional[Message]:
         retries = 0
         flood_waits = 0
