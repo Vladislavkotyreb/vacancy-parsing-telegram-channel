@@ -1,4 +1,4 @@
-// Пример: скорость ленты по формуле сцены (подставь свои T и формулу y(t)). node velocity_check.js
+// Пример: скорость ленты по формуле сцены (подставь свои T и формулу y(t)). Запуск: node velocity_check.js
 // проверка скорости ленты по формуле сцены: нет скачков скорости между кадрами
 const T={outMsg:1.7,digest:2.45,scrollA:3.9,scrollB:5.5};const outH=39,digH=629,scrollMax=181;
 const cl=x=>Math.min(1,Math.max(0,x)),prog=(t,a,d)=>cl((t-a)/d),eIO=p=>p<.5?4*p*p*p:1-Math.pow(-2*p+2,3)/2,glide=p=>{if(p<=0)return 0;if(p>=1)return 1;const f=x=>1-Math.exp(-10*x)*(1+10*x);return f(p)/f(1)};
