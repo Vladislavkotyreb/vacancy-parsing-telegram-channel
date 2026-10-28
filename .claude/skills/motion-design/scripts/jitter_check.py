@@ -35,7 +35,10 @@ def main():
         x = np.arange(lo, hi)
         fit = np.polyval(np.polyfit(x, s[lo:hi], 2 if hi - lo > 3 else 1), i)
         dev[i] = abs(s[i] - fit)
-    verdict = 'плавно' if dev.max() <= 0.3 else ('почти плавно' if dev.max() <= 0.5 else 'ДРОЖИТ')
+    # На быстром движении (десятки px/кадр) погрешность замера растёт: дрожание —
+    # это отклонение больше 0.5 px И больше 3% скорости в этом кадре.
+    shaky = (dev > 0.5) & (dev > 0.03 * np.abs(s))
+    verdict = 'ДРОЖИТ' if shaky.any() else ('плавно' if dev.max() <= 0.3 else 'плавно (погрешность на быстром движении)')
     print(f'отклонение от плавного: среднее {dev.mean():.2f} px, максимум {dev.max():.2f} px — {verdict}')
 
 if __name__ == '__main__':
