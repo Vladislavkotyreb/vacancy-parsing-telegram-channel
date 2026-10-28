@@ -1,0 +1,258 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  /* Кадр 1080×1350 (4:5 — Телеграм показывает его в чате без обрезки; 9:16 обрезал сверху и снизу). Стиль — по роликам Миши Наера (mishanaer.com: mentions, rag):
+     вертикальный градиент #C9D172 → #86C281, iPhone в зелёном титане ~80% ширины,
+     живой интерфейс Telegram iOS, кольцо-касание, «подъём» нажатой кнопки. */
+  html,body{margin:0;width:1080px;height:1350px;overflow:hidden;background:#000}
+  #frame{position:absolute;inset:0;background:linear-gradient(180deg,#C9D172 0%,#C1D076 26%,#AACC7C 56%,#98C77D 83%,#86C281 100%)}
+  /* мокап iPhone 17 из Figma (iOS 27 UI Kit), экспорт 1350×2760 (3x), вырез экрана 402×874 pt */
+  #phone{position:absolute;left:216.00px;top:260px;width:648.00px;height:1324.80px;
+    filter:drop-shadow(0 40px 60px rgba(40,70,20,.28)) drop-shadow(0 8px 16px rgba(40,70,20,.18))}
+  #device{position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none}
+  #screen{position:absolute;left:34.56px;top:33.12px;width:578.88px;height:1258.56px;border-radius:91px;overflow:hidden;background:#fff}
+  #ui{position:absolute;left:0;top:0;width:402px;height:874px;transform-origin:0 0;transform:scale(1.4400);
+    font-family:"SF Pro Text","Inter",system-ui,sans-serif;color:#000;-webkit-font-smoothing:antialiased}
+  /* обои чата */
+  /* обои Telegram по умолчанию: градиент #DBDDBB/#6BA587/#D5D88D/#88B884 + узор pattern.svg (soft-light, 50%) */
+  #wall{position:absolute;inset:0;width:402px;height:874px}
+  /* статус-бар и шапка */
+  /* край ленты под шапкой: только мягкое размытие, без цветной подложки (scroll edge effect iOS 26) */
+  #topfade{position:absolute;left:0;right:0;top:0;height:118px;z-index:4;pointer-events:none;
+    background:linear-gradient(180deg,rgba(255,255,255,.28),rgba(255,255,255,0));
+    backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);
+    -webkit-mask-image:linear-gradient(180deg,#000 0%,#000 45%,transparent 100%);mask-image:linear-gradient(180deg,#000 0%,#000 45%,transparent 100%)}
+  #status{position:absolute;left:0;right:0;top:0;height:50px;z-index:5}
+  #time{position:absolute;left:52px;top:20px;font:600 17px/22px "SF Pro Text","Inter";letter-spacing:-.3px}
+  #icons{position:absolute;right:32px;top:23px;display:flex;gap:6px;align-items:center}
+  #header{position:absolute;left:0;right:0;top:60px;height:52px;z-index:5}
+  /* Liquid Glass (iOS 26): прозрачная капсула — под ней размытая и чуть искажённая лента,
+     цвета усилены, по краю светлый блик (свет сверху-слева), снизу — мягкая тень */
+  .glass{background:rgba(255,255,255,.36);
+    backdrop-filter:url(#liquid) blur(3px) saturate(1.45) brightness(1.06);-webkit-backdrop-filter:blur(3px) saturate(1.45) brightness(1.06);
+    box-shadow:inset 1.2px 1.2px .6px -.4px rgba(255,255,255,.95),inset -1px -1px .6px -.4px rgba(255,255,255,.6),
+      inset 0 0 7px rgba(255,255,255,.35),0 6px 16px rgba(0,0,0,.10),0 1px 3px rgba(0,0,0,.07)}
+  #back{position:absolute;left:14px;top:4px;width:44px;height:44px;border-radius:22px;display:flex;align-items:center;justify-content:center}
+  #title{position:absolute;left:50%;transform:translateX(-50%);top:4px;height:44px;padding:0 18px;border-radius:22px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  #title b{font:600 15px/18px "SF Pro Text","Inter";letter-spacing:-.2px}
+  #title span{font:400 11.5px/14px "SF Pro Text","Inter";color:#8a8a8e}
+  #avatar{position:absolute;right:14px;top:4px;width:44px;height:44px;border-radius:22px;overflow:hidden;background:#F2A65A}
+  /* лента */
+  /* лента доходит до клавиатуры бота и уходит под поле ввода, как в Telegram iOS */
+  #viewport{position:absolute;left:0;right:0;top:0;bottom:252px;overflow:hidden}
+  #feed{position:absolute;left:0;right:0;bottom:56px;padding:0 10px;display:flex;flex-direction:column;gap:6px}
+  #bottomfade{position:absolute;left:0;right:0;bottom:252px;height:70px;z-index:4;pointer-events:none;
+    backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);
+    -webkit-mask-image:linear-gradient(0deg,#000 0%,#000 45%,transparent 100%);mask-image:linear-gradient(0deg,#000 0%,#000 45%,transparent 100%)}
+  .row{display:flex}
+  .row.out{justify-content:flex-end}
+  .bubble{max-width:300px;padding:7px 11px 6px;border-radius:18px;font:400 15.5px/20px "SF Pro Text","Inter";letter-spacing:-.25px;position:relative;
+    box-shadow:0 .5px 1px rgba(0,0,0,.12)}
+  .in .bubble{background:#fff;border-bottom-left-radius:6px}
+  .out .bubble{background:#E1FFC7;border-bottom-right-radius:6px}
+  .meta{float:right;margin:6px 0 -4px 10px;font:400 11px/14px "SF Pro Text","Inter";color:#8e8e93}
+  .out .meta{color:#4FAE4E}
+  .chip{align-self:center;margin:6px 0;padding:3px 10px;border-radius:12px;background:rgba(66,110,40,.35);color:#fff;font:600 13px/18px "SF Pro Text","Inter"}
+  .sep{color:#b6b6ba;letter-spacing:-1px;margin:10px 0;white-space:nowrap} /* как в боте: пустая строка, 16 тире, пустая строка */
+  .link{color:#2481CC}
+  .inline-kb{margin-top:5px;max-width:300px;border-radius:14px;padding:11px;text-align:center;font:500 15px/19px "SF Pro Text","Inter";color:#fff;
+    background:rgba(52,92,30,.38);backdrop-filter:blur(6px)}
+  /* поле ввода и клавиатура бота */
+  #composer{position:absolute;left:0;right:0;bottom:252px;height:56px;z-index:4}
+  #attach{position:absolute;left:10px;top:8px;width:40px;height:40px;border-radius:20px;display:flex;align-items:center;justify-content:center}
+  #input{position:absolute;left:58px;right:58px;top:8px;height:40px;border-radius:20px;display:flex;align-items:center;padding-left:16px;font:400 16px "SF Pro Text","Inter";color:#9b9ba0}
+  #mic{position:absolute;right:10px;top:8px;width:40px;height:40px;border-radius:20px;display:flex;align-items:center;justify-content:center}
+  #kb{position:absolute;left:0;right:0;bottom:0;height:252px;background:rgba(206,210,217,.96);z-index:4;padding:8px 6px 0;box-sizing:border-box}
+  .kbtn{height:46px;margin-bottom:6px;border-radius:9px;background:#fff;box-shadow:0 1px 0 rgba(0,0,0,.28);
+    display:flex;align-items:center;justify-content:center;font:400 16px "SF Pro Text","Inter";letter-spacing:-.3px;transform-origin:50% 50%}
+  #home{position:absolute;left:50%;bottom:8px;width:134px;height:5px;border-radius:3px;background:#000;transform:translateX(-50%);z-index:6}
+  /* заголовок над мокапом */
+  #headline{position:absolute;left:60px;right:60px;top:62px;text-align:center;color:#1E2B12;
+    font:700 64px/70px "SF Pro Display","Inter Display","Inter",system-ui,sans-serif;letter-spacing:-1.8px;will-change:transform,opacity}
+  /* блик на лупе 🔎: полоса света по стеклу (круг ~27% в правом верхнем углу эмодзи) + искра на ободке */
+  .mag{position:relative;display:inline-block;width:1.18em;height:1.18em;vertical-align:-0.24em;margin-right:.08em}
+  .mag .emo{position:absolute;inset:0;margin:0;vertical-align:0}
+  .mag .glint{position:absolute;inset:0;clip-path:circle(27% at 64% 34%);overflow:hidden;will-change:transform}
+  .mag .band{position:absolute;top:-60%;left:0;width:34%;height:220%;transform-origin:50% 50%;will-change:transform;
+    background:linear-gradient(90deg,rgba(120,170,235,0) 0%,rgba(120,170,235,.45) 28%,rgba(255,255,255,1) 50%,rgba(120,170,235,.45) 72%,rgba(120,170,235,0) 100%)}
+  .mag .spark{position:absolute;left:14%;top:-26%;width:84%;height:84%;opacity:0;will-change:transform,opacity;
+    filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 2.5px rgba(150,200,255,.95))}
+  /* эмодзи Apple — картинками */
+  .emo{height:1.18em;width:1.18em;vertical-align:-0.24em;margin-right:.08em}
+  /* слои, которые двигаются, рисуются отдельно — текст не дрожит */
+  #feed,#outRow,#digestRow,#searchBubble,#kNow,#tap,#phone{will-change:transform}
+  /* касание — кольцо, как у Наера */
+  #tap{position:absolute;left:0;top:0;border-radius:50%;border-style:solid;border-color:rgba(150,205,245,.78);pointer-events:none;z-index:9;opacity:0;box-sizing:border-box}
+</style></head>
+<body>
+<svg width="0" height="0" style="position:absolute"><filter id="liquid" x="0" y="0" width="100%" height="100%">
+  <feTurbulence type="fractalNoise" baseFrequency="0.012 0.02" numOctaves="2" seed="7" result="n"/>
+  <feGaussianBlur in="n" stdDeviation="2" result="nb"/>
+  <feDisplacementMap in="SourceGraphic" in2="nb" scale="10" xChannelSelector="R" yChannelSelector="G"/>
+</filter></svg>
+<div id="frame">
+  <div id="headline">Выводите новые<br>вакансии когда удобно</div>
+  <div id="phone">
+    <div id="screen">
+      <div id="ui">
+        <img id="wall" src="assets/tg_wallpaper.png">
+        <div id="viewport"><div id="feed">
+          <div class="chip">Вчера</div>
+          <div class="row in"><div class="bubble">✨ <b>9 новых вакансий</b> продуктового дизайнера (за последние 72 ч)<div class="sep">————————————————</div>🎨 <b>Product Designer</b><br>🏢 VK<br>📍 Москва<br><span class="link">Открыть вакансию</span><span class="meta">10:16</span></div></div>
+          <div class="chip">Сегодня</div>
+          <div class="row in"><div class="bubble">📭 <b>Новых вакансий продуктового дизайнера сегодня нет</b><br>Все свежие за 3 дня вы уже получили. Завтра в 10:00 проверю снова<span class="meta">10:16</span></div></div>
+          <div class="row out" id="outRow" style="display:none"><div class="bubble" id="outBubble">🔎 Вакансии сейчас<span class="meta">18:42 ✓✓</span></div></div>
+          <!-- «Ищу…»: бот пишет его на время поиска и удаляет, когда приходит подборка (bot/chat_main.py) -->
+          <div class="row in" id="searchRow" style="height:0;margin-top:-6px;align-items:flex-end;overflow:visible"><div class="bubble" id="searchBubble">🔎 Ищу новые вакансии по твоим ролям — это может занять пару минут…<span class="meta">18:42</span></div></div>
+          <!-- до 4096 символов в сообщении: 5 вакансий приходят одним сообщением, кнопки «Показать остальные» нет (она — только когда новых больше 30) -->
+          <div class="row in" id="digestRow" style="display:none;flex-direction:column;align-items:flex-start"><div class="bubble" id="digest">✨ <b>5 новых вакансий</b> продуктового дизайнера (за последние 72 ч)<br>Источники: HeadHunter, Хабр Карьера, GeekJob, GetMatch
+            <div class="sep">————————————————</div>🎨 <b>Senior Product Designer</b><br>📊 Senior<br>🏢 Ozon<br>💰 от 300 000 ₽<br>📍 Удалённо<br>🔗 HeadHunter<br><span class="link">Открыть вакансию</span>
+            <div class="sep">————————————————</div>🎨 <b>Продуктовый дизайнер (B2B)</b><br>📊 Middle<br>🏢 Т-Банк<br>💰 200 000 — 280 000 ₽<br>📍 Москва<br>🔗 Хабр Карьера<br><span class="link">Открыть вакансию</span>
+            <div class="sep">————————————————</div>🎨 <b>Lead UX/UI Designer</b><br>📊 Lead<br>🏢 Авито<br>📍 Удалённо<br>🔗 GetMatch<br><span class="link">Открыть вакансию</span>
+            <div class="sep">————————————————</div>🎨 <b>Product Designer (Fintech)</b><br>📊 Senior<br>🏢 Альфа-Банк<br>💰 от 280 000 ₽<br>📍 Удалённо<br>🔗 HeadHunter<br><span class="link">Открыть вакансию</span>
+            <div class="sep">————————————————</div>🎨 <b>UX/UI Designer</b><br>📊 Middle<br>🏢 Самокат<br>📍 Москва<br>🔗 GeekJob<br><span class="link">Открыть вакансию</span><span class="meta">18:43</span></div></div>
+        </div></div>
+        <div id="topfade"></div>
+        <div id="bottomfade"></div>
+        <div id="status"><div id="time">9:41</div>
+          <div id="icons">
+            <svg width="18" height="12"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5" width="3" height="7" rx="1"/><rect x="10" y="2.5" width="3" height="9.5" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+            <svg width="16" height="12" viewBox="0 0 16 12"><path d="M8 11.5l2.2-2.6a3.2 3.2 0 0 0-4.4 0z"/><path d="M8 5.2a6 6 0 0 1 4.2 1.7l1.4-1.6A8.2 8.2 0 0 0 8 3a8.2 8.2 0 0 0-5.6 2.3l1.4 1.6A6 6 0 0 1 8 5.2z"/><path d="M8 0.9a10.4 10.4 0 0 1 7.1 2.8L16 2.6A11.8 11.8 0 0 0 8-.5 11.8 11.8 0 0 0 0 2.6l.9 1.1A10.4 10.4 0 0 1 8 .9z"/></svg>
+            <svg width="27" height="13"><rect x=".5" y=".5" width="22" height="12" rx="3.5" fill="none" stroke="#000" opacity=".4"/><rect x="2" y="2" width="19" height="9" rx="2"/><rect x="24" y="4.5" width="2" height="4" rx="1" opacity=".4"/></svg>
+          </div></div>
+        <div id="header">
+          <div id="back" class="glass"><svg width="12" height="20"><path d="M10 2L2 10l8 8" fill="none" stroke="#000" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <div id="title" class="glass"><b>IT vacancies daily</b><span>бот</span></div>
+          <canvas id="avatar" width="132" height="132"></canvas>
+        </div>
+        <div id="composer">
+          <div id="attach" class="glass"><svg width="20" height="22"><path d="M14 6l-7 7a2.5 2.5 0 0 0 3.5 3.5l7.5-7.5a4.5 4.5 0 0 0-6.4-6.4L3.8 10.4a6.5 6.5 0 0 0 9.2 9.2L19 13.6" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/></svg></div>
+          <div id="input" class="glass">Message</div>
+          <div id="mic" class="glass"><svg width="16" height="22"><rect x="4.5" y="1" width="7" height="13" rx="3.5" fill="none" stroke="#000" stroke-width="1.8"/><path d="M1.5 10a6.5 6.5 0 0 0 13 0M8 16.5V21" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/></svg></div>
+        </div>
+        <div id="kb">
+          <div class="kbtn" id="kNow"><span>🔎 Вакансии сейчас</span></div>
+          <div class="kbtn">Мои вакансии</div>
+          <div class="kbtn">Прекратить рассылку</div>
+          <div class="kbtn">Выбрать роли заново</div>
+        </div>
+        <div id="home"></div>
+        <div id="tap"></div>
+      </div>
+    </div>
+    <img id="device" src="assets/iphone17_frame.png">
+  </div>
+</div>
+<script>
+// ===== Тайминг (сек) — тот же, что в скрипте After Effects =====
+const T = {
+  headIn:    0.15,   // заголовок проявляется
+  phoneIn:   0.10,   // телефон выезжает снизу (1.0 с, ease-out)
+  btnGlint:  1.15,   // блик на лупе кнопки — притягивает взгляд перед нажатием
+  pressDown: 1.90,   // палец на «🔎 Вакансии сейчас»
+  pressUp:   2.22,
+  outMsg:    2.30,   // уходит сообщение
+  search:    2.75,   // бот пишет «Ищу новые вакансии…» (поиск 2.6 с)
+  glintA:    3.25,   // блики на лупе, пока идёт поиск
+  glintB:    4.35,
+  digest:    5.35,   // подборка приходит, «Ищу…» удаляется (толчок ленты 1.4 с)
+  scrollA:   6.80,   // свайп вниз по подборке
+  scrollB:   9.00,
+  upA:      10.20,   // прочитали — лента возвращается наверх
+  upB:      11.30,
+  phoneOut: 11.50,   // телефон уезжает вниз (0.8 с)
+  headOut:  11.55,   // заголовок гаснет (0.6 с)
+  end:      12.60,   // последний кадр = первый (пустой фон) — бесшовный цикл
+};
+const SC=1.4400; // pt → px экрана
+const clamp=(x,a=0,b=1)=>Math.min(b,Math.max(a,x));
+const prog=(t,a,d)=>clamp((t-a)/d);
+const easeOut=p=>1-Math.pow(1-p,3);
+const easeInOut=p=>p<.5?4*p*p*p:1-Math.pow(-2*p+2,3)/2;
+// iOS-пружина: лёгкий перелёт и мягкая остановка
+const spring=p=>p<=0?0:p>=1?1:1-Math.exp(-8*p)*Math.cos(7*p);
+// пружина без перелёта — для сдвига ленты
+// критически задемпфированная пружина от покоя: плавный старт и почти нулевая скорость в конце (ω=10) — без рывков на стыках
+const glide=p=>{if(p<=0)return 0;if(p>=1)return 1;const f=x=>1-Math.exp(-10*x)*(1+10*x);return f(p)/f(1)};
+
+// эмодзи → картинки Apple
+const EMO={'✨':'2728','📭':'1f4ed','🎨':'1f3a8','🏢':'1f3e2','📍':'1f4cd','🔎':'1f50e','📊':'1f4ca','💰':'1f4b0','🔗':'1f517'};
+(function swap(node){for(const n of [...node.childNodes]){
+  if(n.nodeType===3){const parts=[...n.data];if(!parts.some(c=>EMO[c]))continue;
+    const frag=document.createDocumentFragment();let buf='';
+    for(const c of parts){if(EMO[c]){if(buf){frag.append(buf);buf=''}const im=document.createElement('img');im.className='emo';im.src=`assets/emoji/${EMO[c]}.png`;frag.append(im)}else buf+=c}
+    if(buf)frag.append(buf);n.replaceWith(frag)}
+  else if(n.nodeType===1&&n.tagName!=='SCRIPT')swap(n)}})(document.body);
+
+// лупы с бликом: на кнопке и в «Ищу…»
+const SPARK='<svg viewBox="0 0 20 20" width="100%" height="100%"><path d="M10 0 C10.8 7 13 9.2 20 10 C13 10.8 10.8 13 10 20 C9.2 13 7 10.8 0 10 C7 9.2 9.2 7 10 0Z" fill="#fff"/></svg>';
+function magnify(sel){const img=document.querySelector(sel+' img.emo');const w=document.createElement('span');w.className='mag';
+  img.replaceWith(w);w.append(img);w.insertAdjacentHTML('beforeend','<span class="glint"><span class="band"></span></span><span class="spark">'+SPARK+'</span>');return w}
+const MAGS=[{el:magnify('#kNow'),times:['btnGlint']},{el:magnify('#searchBubble'),times:['glintA','glintB']}];
+function glint(m,t){
+  // полоса проходит по стеклу за 0.55 с (ease-in-out), искра вспыхивает на пике
+  let x=-1.5,sp=0;
+  for(const k of m.times){const p=prog(t,T[k],0.55);if(p>0&&p<1)x=-1.2+easeInOut(p)*3.6;sp=Math.max(sp,Math.sin(Math.PI*prog(t,T[k]+0.2,0.55)))}
+  m.el.querySelector('.band').style.transform=`translateX(${x*100}%) rotate(25deg)`;
+  const s=m.el.querySelector('.spark');s.style.opacity=sp;s.style.transform=`scale(${0.2+0.8*sp}) rotate(${sp*60}deg)`;
+}
+const feed=document.getElementById('feed'), out=document.getElementById('outRow'), dig=document.getElementById('digestRow');
+const srow=document.getElementById('searchRow'), sbub=document.getElementById('searchBubble');
+const kNow=document.getElementById('kNow'), tap=document.getElementById('tap'), head=document.getElementById('headline'), phone=document.getElementById('phone');
+const PHONE_TRAVEL=1200; // px: телефон целиком за нижним краем кадра
+out.style.display='flex'; dig.style.display='flex';
+const outH=out.getBoundingClientRect().height/SC+6, digH=dig.getBoundingClientRect().height/SC+6;
+const viewH=874-308-108; // видимая высота ленты под шапкой
+const scrollMax=Math.max(0, digH - viewH + 10);
+const kr0=kNow.getBoundingClientRect(), ui0=document.getElementById('ui').getBoundingClientRect();
+const KX=(kr0.left+kr0.width/2-ui0.left)/SC, KY=(kr0.top+kr0.height/2-ui0.top)/SC;
+const searchH=sbub.getBoundingClientRect().height/SC+6; // вклад «Ищу…» в высоту ленты
+
+function render(t){
+  // заголовок: проявляется и чуть поднимается
+  const ph=easeOut(prog(t,T.headIn,0.8)), hout=easeInOut(prog(t,T.headOut,0.6));
+  head.style.opacity=ph*(1-hout); head.style.transform=`translateY(${(1-ph)*28}px)`;
+  // телефон: выезжает снизу (ease-out), в конце уезжает вниз (ease-in-out)
+  const pin=1-Math.pow(1-prog(t,T.phoneIn,1.0),5), pout=easeInOut(prog(t,T.phoneOut,0.8));
+  phone.style.transform=`translateY(${((1-pin)+pout)*PHONE_TRAVEL}px)`;
+  // кольцо-касание: опускается на кнопку, держится, пока палец нажат, гаснет после отпускания
+  const pr=easeOut(prog(t,T.pressDown-0.14,0.34));
+  const on=prog(t,T.pressDown-0.14,0.1), off=easeOut(prog(t,T.pressUp,0.35));
+  const r=58-26*pr, w=17-5*pr, op=on*(1-off);
+  Object.assign(tap.style,{width:2*r+'px',height:2*r+'px',left:(KX-r)+'px',top:(KY-r)+'px',borderWidth:w+'px',opacity:op*0.9});
+  // кнопка: приподнимается, пока нажата, и пружиной возвращается
+  const down=easeOut(prog(t,T.pressDown,0.18)), up=spring(prog(t,T.pressUp,0.55)), k=down*(1-up);
+  kNow.style.transform=`scale(${1+0.045*k})`;
+  kNow.style.boxShadow=`0 1px 0 rgba(0,0,0,.28), 0 ${10*k}px ${24*k}px rgba(0,0,0,${.18*k})`;
+  kNow.style.background=k>.02?`rgb(${255-14*k},${255-10*k},255)`:'#fff';
+  // исходящее сообщение
+  const po=spring(prog(t,T.outMsg,0.6));
+  out.style.opacity=clamp(prog(t,T.outMsg,0.15));
+  out.style.transform=`translateY(${(1-po)*22}px) scale(${0.95+0.05*po})`;
+  out.style.transformOrigin='100% 100%';
+  for(const m of MAGS) glint(m,t);
+  // «Ищу…»: появляется как обычное входящее и выталкивает ленту; удаляется вместе с приходом подборки
+  const sIn=glide(prog(t,T.search,0.7)), sOut=glide(prog(t,T.digest,1.4)), ps=spring(prog(t,T.search,0.6));
+  srow.style.height=Math.max(0,searchH*(sIn-sOut))+'px';
+  sbub.style.opacity=clamp(prog(t,T.search,0.15))*(1-clamp(prog(t,T.digest-0.05,0.2)));
+  sbub.style.transform=`translateY(${(1-ps)*22}px) scale(${0.95+0.05*ps})`;
+  sbub.style.transformOrigin='0% 100%';
+  // подборка
+  const pd=spring(prog(t,T.digest,0.7));
+  dig.style.opacity=clamp(prog(t,T.digest,0.18));
+  dig.style.transform=`translateY(${(1-pd)*30}px) scale(${0.97+0.03*pd})`;
+  dig.style.transformOrigin='0% 100%';
+  // лента: новые сообщения мягко выталкивают её вверх, затем медленно листаем подборку
+  const pof=glide(prog(t,T.outMsg,0.7)), pf=glide(prog(t,T.digest,1.4));
+  const topAnchor=scrollMax*(1-easeInOut(prog(t,T.scrollA,T.scrollB-T.scrollA))+easeInOut(prog(t,T.upA,T.upB-T.upA)));
+  feed.style.transform=`translateY(${(1-pof)*outH+(1-pf)*digH+pf*topAnchor}px)`;
+}
+// аватар бота — анимация с сайта (built-prdsvac-icon.mp4, 62 кадра, 30 fps), зациклена
+const AV=[],avc=document.getElementById('avatar').getContext('2d');
+for(let i=1;i<=62;i++){const im=new Image();im.src=`assets/avatar/a${String(i).padStart(2,'0')}.png`;AV.push(im)}
+function drawAvatar(t){const im=AV[Math.floor(t*30)%AV.length];if(im.complete){avc.drawImage(im,-4,-4,140,140)}}
+const _render=render;
+window.render=t=>{_render(t);drawAvatar(t)}; window.T=T;
+window.ready=Promise.all(AV.map(im=>im.decode())).then(()=>window.render(0));
+</script>
+</body></html>
