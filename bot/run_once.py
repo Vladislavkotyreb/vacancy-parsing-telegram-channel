@@ -17,7 +17,7 @@ except ImportError:
 from aiogram import Bot
 from aiogram.enums import ParseMode
 
-from bot.broadcast import load_broadcast, run_broadcast, send_preview
+from bot.broadcast import SAFE_FROM, SAFE_TO, find_video, is_safe_time, load_broadcast, run_broadcast, send_preview
 from bot.config import Settings
 from bot.runtime import limit_threads
 from bot.database import VacancyDatabase
@@ -259,13 +259,14 @@ async def _broadcast(bot: Bot, db: VacancyDatabase, args: argparse.Namespace, ad
         logger.error("broadcast: укажите --file с текстом сообщения")
         return 1
     broadcast_id, text = load_broadcast(Path(args.file))
+    video = find_video(Path(args.file), text)
     user_ids = db.broadcast_audience(include_starters=args.include_starters)
 
     if not args.send:
         if not admin_id:
             logger.error("broadcast: для превью нужен TELEGRAM_ADMIN_ID в .env")
             return 1
-        await send_preview(bot, int(admin_id), text)
+        await send_preview(bot, int(admin_id), text, video)
         logger.info(
             "Превью «%s» отправлено админу. Получателей при отправке: %s. "
             "Чтобы разослать всем, добавьте --send",
@@ -274,7 +275,17 @@ async def _broadcast(bot: Bot, db: VacancyDatabase, args: argparse.Namespace, ad
         )
         return 0
 
-    stats = await run_broadcast(bot, db, broadcast_id, text, user_ids)
+    now = datetime.now(ZoneInfo(os.getenv("TIMEZONE", "Europe/Moscow")))
+    if not is_safe_time(now.hour, now.minute):
+        message = (
+            f"⛔ Рассылка «{broadcast_id}» не отправлена: сейчас {now:%H:%M} МСК. "
+            f"Всем отправляем только с {SAFE_FROM[0]:02d}:{SAFE_FROM[1]:02d} до {SAFE_TO[0]:02d}:{SAFE_TO[1]:02d}. "
+            "Превью (без --send) можно в любое время."
+        )
+        logger.error(message)
+        await _notify_admin(bot, admin_id, message)
+        return 1
+    stats = await run_broadcast(bot, db, broadcast_id, text, user_ids, video)
     await _notify_admin(
         bot,
         admin_id,
