@@ -109,6 +109,7 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
         markup = self.bot.calls[0][2]
         self.assertIsInstance(markup, ReplyKeyboardMarkup)
         self.assertEqual(markup.keyboard[0][0].text, BTN_NOW)
+        self.assertIs(markup.is_persistent, False, "подборка не должна закреплять панель")
 
     async def test_overflow_digest_still_has_show_more_button(self):
         self.db.set_subscriber_roles(10, ["backend_python"])

@@ -24,6 +24,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    ReplyKeyboardRemove,
     TelegramObject,
 )
 
@@ -412,7 +413,8 @@ async def _show_vacancy_step(
 async def send_welcome(message: Message, subscribed: bool = False) -> None:
     await message.answer(
         "Привет! Каждый день в <b>10:00 (МСК)</b> присылаю новые вакансии в личку.\n\n"
-        "Сначала выбери, где искать, потом специальность и вакансии — можно несколько.",
+        "Сначала выбери, где искать, потом специальность и вакансии — можно несколько.\n\n"
+        "Скрыть кнопки — /hide, вернуть — /menu.",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(subscribed),
     )
@@ -506,6 +508,23 @@ async def cmd_start(message: Message, db: VacancyDatabase) -> None:
     subscribed = _is_subscribed(message.from_user.id, db) if message.from_user else False
     await send_welcome(message, subscribed)
     await start_flow(message, db)
+
+
+@router.message(Command("hide"))
+async def cmd_hide(message: Message) -> None:
+    await message.answer(
+        "Кнопки скрыты. Вернуть их — /menu.\nПодписка и рассылка продолжают работать.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+
+@router.message(Command("menu"))
+async def cmd_menu(message: Message, db: VacancyDatabase) -> None:
+    subscribed = _is_subscribed(message.from_user.id, db) if message.from_user else False
+    await message.answer(
+        "Меню 👇\nСкрыть кнопки — /hide. Также панель можно свернуть средствами Telegram.",
+        reply_markup=main_menu_keyboard(subscribed),
+    )
 
 
 @router.message(F.text.in_({BTN_CHOOSE_ROLES, BTN_CHOOSE_ROLES_AGAIN}))
@@ -870,7 +889,7 @@ async def stale_button(callback: CallbackQuery) -> None:
 async def fallback(message: Message, db: VacancyDatabase) -> None:
     subscribed = _is_subscribed(message.from_user.id, db) if message.from_user else False
     await message.answer(
-        "Используй кнопки меню 👇",
+        "Используй кнопки меню 👇\nСкрыть кнопки — /hide, вернуть — /menu.",
         reply_markup=main_menu_keyboard(subscribed),
     )
 

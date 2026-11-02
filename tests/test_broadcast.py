@@ -160,6 +160,7 @@ class BroadcastVideoTest(unittest.IsolatedAsyncioTestCase):
         markup = self.bot.send_animation.await_args.kwargs["reply_markup"]
         self.assertIsInstance(markup, ReplyKeyboardMarkup)
         self.assertEqual(markup.keyboard[0][0].text, BTN_NOW)
+        self.assertIs(markup.is_persistent, False, "анонс не должен закреплять панель")
 
     async def test_preview_sends_video_to_admin_only(self):
         broadcast_id, text, video = self.load()

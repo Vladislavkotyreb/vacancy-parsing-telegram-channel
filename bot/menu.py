@@ -29,5 +29,7 @@ def main_menu_keyboard(subscribed: bool = False) -> ReplyKeyboardMarkup:
             [KeyboardButton(text=choose_roles_button(subscribed))],
         ],
         resize_keyboard=True,
-        is_persistent=True,
+        # Не закрепляем панель: Telegram должен позволять свернуть её значком
+        # клавиатуры и читать вакансии на весь экран (в том числе на Android).
+        is_persistent=False,
     )
