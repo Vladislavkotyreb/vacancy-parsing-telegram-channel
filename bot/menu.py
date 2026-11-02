@@ -1,13 +1,15 @@
-"""Нижнее меню бота — общее для чат-бота и утренней рассылки.
+"""Штатная кнопка «Меню» Telegram; открытие и закрытие выполняет клиент.
 
-Меню у человека обновляется, только когда бот присылает его заново. Многие
-подписчики ничего не нажимают и только читают подборку — поэтому подборка
-тоже приносит актуальное меню, иначе новые кнопки они бы не увидели.
+setMyCommands + setChatMenuButton(MenuButtonCommands), без ReplyKeyboardMarkup.
+Тексты старой клавиатуры сохранены для кнопок, уже находящихся у пользователей.
 """
 
 from __future__ import annotations
 
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
+from typing import Optional
+
+from aiogram import Bot
+from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeChat, MenuButtonCommands
 
 BTN_NOW = "🔎 Вакансии сейчас"
 BTN_MY_SUBSCRIPTION = "Мои вакансии"
@@ -16,20 +18,25 @@ BTN_CHOOSE_ROLES = "Выбрать роли"
 BTN_CHOOSE_ROLES_AGAIN = "Выбрать роли заново"
 
 
-def choose_roles_button(subscribed: bool) -> str:
-    return BTN_CHOOSE_ROLES_AGAIN if subscribed else BTN_CHOOSE_ROLES
+def menu_commands() -> list[BotCommand]:
+    return [
+        BotCommand(command="vacancies", description=BTN_NOW),
+        BotCommand(command="myrole", description=BTN_MY_SUBSCRIPTION),
+        BotCommand(command="roles", description=BTN_CHOOSE_ROLES),
+        BotCommand(command="stop", description=BTN_UNSUBSCRIBE),
+    ]
 
 
-def main_menu_keyboard(subscribed: bool = False) -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=BTN_NOW)],
-            [KeyboardButton(text=BTN_MY_SUBSCRIPTION)],
-            [KeyboardButton(text=BTN_UNSUBSCRIBE)],
-            [KeyboardButton(text=choose_roles_button(subscribed))],
-        ],
-        resize_keyboard=True,
-        # Не закрепляем панель: Telegram должен позволять свернуть её значком
-        # клавиатуры и читать вакансии на весь экран (в том числе на Android).
-        is_persistent=False,
+async def configure_native_menu(bot: Bot, admin_id: Optional[int] = None) -> None:
+    await bot.set_my_commands(
+        menu_commands(), scope=BotCommandScopeAllPrivateChats(),
     )
+    if admin_id is not None:
+        await bot.set_my_commands(
+            menu_commands() + [
+                BotCommand(command="stats", description="Статистика бота"),
+                BotCommand(command="users", description="Пользователи бота"),
+            ],
+            scope=BotCommandScopeChat(chat_id=admin_id),
+        )
+    await bot.set_chat_menu_button(menu_button=MenuButtonCommands())

@@ -1,4 +1,4 @@
-"""Скрытие и возврат меню через настоящую маршрутизацию aiogram, без сети."""
+"""Штатное меню Telegram и совместимость со старой клавиатурой, без сети."""
 
 from __future__ import annotations
 
@@ -10,16 +10,14 @@ from unittest.mock import AsyncMock
 
 from aiogram import Bot
 from aiogram.methods import SendMessage
-from aiogram.types import Chat, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove, User
+from aiogram.types import Chat, Message, ReplyKeyboardRemove, User
 
-from bot.chat_main import router
+from bot.chat_main import _now_pressed_at, router
+from bot.config import Settings
 from bot.database import VacancyDatabase
 from bot.menu import (
     BTN_CHOOSE_ROLES,
-    BTN_CHOOSE_ROLES_AGAIN,
-    BTN_MY_SUBSCRIPTION,
     BTN_NOW,
-    BTN_UNSUBSCRIBE,
 )
 
 
@@ -31,6 +29,12 @@ class MenuVisibilityTest(unittest.IsolatedAsyncioTestCase):
         self.user_id = 999001
         self.session = AsyncMock()
         self.bot = Bot(token="1:test", session=self.session)
+        self.settings = Settings(
+            telegram_bot_token="1:test", telegram_chat_id=-1, hh_user_agent="test/1.0",
+            hh_access_token="", timezone="Europe/Moscow", max_vacancy_age_hours=72,
+            db_path=self.db.db_path, telegram_admin_id=None,
+        )
+        _now_pressed_at.clear()
 
     async def command(self, text):
         self.session.reset_mock()
@@ -41,35 +45,69 @@ class MenuVisibilityTest(unittest.IsolatedAsyncioTestCase):
             from_user=User(id=self.user_id, is_bot=False, first_name="А"),
             text=text,
         ).as_(self.bot)
-        await router.propagate_event("message", message, db=self.db, bot=self.bot)
+        await router.propagate_event(
+            "message", message, db=self.db, bot=self.bot, settings=self.settings,
+        )
         self.session.assert_awaited_once()
         request = self.session.await_args.args[1]
         self.assertIsInstance(request, SendMessage)
         self.assertEqual(request.chat_id, self.user_id)
         return request
 
-    async def test_hide_removes_keyboard_and_explains_how_to_restore_it(self):
+    async def test_legacy_hide_removes_keyboard_and_points_to_native_menu(self):
         request = await self.command("/hide")
         self.assertIsInstance(request.reply_markup, ReplyKeyboardRemove)
         self.assertEqual(request.reply_markup.model_dump(exclude_none=True), {"remove_keyboard": True})
-        self.assertIn("/menu", request.text)
+        self.assertIn("«Меню» рядом с полем ввода", request.text)
         self.assertIn("продолжают работать", request.text)
 
-    async def test_menu_restores_all_actions_for_subscriber(self):
+    async def test_legacy_menu_does_not_restore_the_old_keyboard(self):
         self.db.set_subscriber_roles(self.user_id, ["backend_python"])
         request = await self.command("/menu")
-        self.assertIsInstance(request.reply_markup, ReplyKeyboardMarkup)
-        self.assertEqual(
-            [button.text for row in request.reply_markup.keyboard for button in row],
-            [BTN_NOW, BTN_MY_SUBSCRIPTION, BTN_UNSUBSCRIBE, BTN_CHOOSE_ROLES_AGAIN],
-        )
-        self.assertIs(request.reply_markup.model_dump(exclude_none=True)["is_persistent"], False)
-        self.assertIn("/hide", request.text)
+        self.assertIsInstance(request.reply_markup, ReplyKeyboardRemove)
+        self.assertIn("«Меню» рядом с полем ввода", request.text)
 
-    async def test_menu_without_subscription_offers_initial_role_selection(self):
+    async def test_native_roles_action_opens_region_selection(self):
+        request = await self.command("/roles")
+        callbacks = [button.callback_data for row in request.reply_markup.inline_keyboard for button in row]
+        self.assertIn("s0:reg:cis", callbacks)
+        self.assertIsNone(self.db.get_subscriber(self.user_id))
+
+    async def test_native_myrole_action_removes_old_keyboard(self):
+        self.db.set_subscriber_roles(self.user_id, ["backend_python"])
+        request = await self.command("/myrole")
+        self.assertIn("Текущая подписка", request.text)
+        self.assertIsInstance(request.reply_markup, ReplyKeyboardRemove)
+
+    async def test_native_stop_action_still_requires_confirmation(self):
+        self.db.set_subscriber_roles(self.user_id, ["backend_python"])
+        request = await self.command("/stop")
+        self.assertIn("Точно отписаться?", request.text)
+        self.assertEqual(request.reply_markup.inline_keyboard[0][0].callback_data, "u:yes")
+        self.assertEqual(self.db.get_subscriber_roles(self.user_id), ["backend_python"])
+
+    async def test_native_vacancies_action_is_routed_before_fallback(self):
+        request = await self.command("/vacancies")
+        self.assertIn("Сначала выбери роли", request.text)
+        self.assertIsInstance(request.reply_markup, ReplyKeyboardRemove)
+
+    async def test_old_vacancies_button_still_works(self):
+        request = await self.command(BTN_NOW)
+        self.assertIn("Сначала выбери роли", request.text)
+        self.assertIsInstance(request.reply_markup, ReplyKeyboardRemove)
+
+    async def test_old_choose_roles_button_still_works(self):
+        request = await self.command(BTN_CHOOSE_ROLES)
+        self.assertIn("Шаг 1 из 3", request.text)
+
+    async def test_unknown_text_points_to_native_menu_and_clears_old_panel(self):
+        request = await self.command("Привет")
+        self.assertIn("«Меню» рядом с полем ввода", request.text)
+        self.assertIsInstance(request.reply_markup, ReplyKeyboardRemove)
+
+    async def test_menu_without_subscription_does_not_subscribe(self):
         request = await self.command("/menu")
-        self.assertEqual(request.reply_markup.keyboard[-1][0].text, BTN_CHOOSE_ROLES)
-        self.assertIs(request.reply_markup.is_persistent, False)
+        self.assertIsInstance(request.reply_markup, ReplyKeyboardRemove)
         self.assertIsNone(self.db.get_subscriber(self.user_id))
 
     async def test_hide_and_restore_preserve_roles_and_region(self):
@@ -86,5 +124,5 @@ class MenuVisibilityTest(unittest.IsolatedAsyncioTestCase):
         self.db.deactivate_subscriber(self.user_id)
         await self.command("/hide")
         request = await self.command("/menu")
-        self.assertEqual(request.reply_markup.keyboard[-1][0].text, BTN_CHOOSE_ROLES)
+        self.assertIsInstance(request.reply_markup, ReplyKeyboardRemove)
         self.assertEqual(self.db.list_active_subscribers(), [])

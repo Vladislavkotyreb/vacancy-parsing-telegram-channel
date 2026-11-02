@@ -10,12 +10,12 @@ from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import AsyncMock
 
-from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardRemove
 
 from bot import chat_main
 from bot.config import Settings
 from bot.database import VacancyDatabase
-from bot.menu import BTN_NOW, main_menu_keyboard
+from bot.menu import BTN_NOW, menu_commands
 from bot.models import Vacancy
 from bot.subscriber_service import SubscriberService
 
@@ -99,7 +99,7 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats.failed_users, [])
         self.assertTrue(any(c == 10 for c, _, _ in self.bot.calls))
 
-    async def test_digest_brings_menu_with_the_new_button(self):
+    async def test_digest_removes_old_keyboard_without_opening_native_menu(self):
         self.db.set_subscriber_roles(10, ["backend_python"])
 
         async def collect(settings, role):
@@ -107,9 +107,8 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
         with mock.patch("bot.subscriber_service.collect_for_role", side_effect=collect):
             await self.service.run_daily_digests()
         markup = self.bot.calls[0][2]
-        self.assertIsInstance(markup, ReplyKeyboardMarkup)
-        self.assertEqual(markup.keyboard[0][0].text, BTN_NOW)
-        self.assertIs(markup.is_persistent, False, "подборка не должна закреплять панель")
+        self.assertIsInstance(markup, ReplyKeyboardRemove)
+        self.assertTrue(markup.remove_keyboard)
 
     async def test_overflow_digest_still_has_show_more_button(self):
         self.db.set_subscriber_roles(10, ["backend_python"])
@@ -143,8 +142,9 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
             await chat_main.btn_now(msg, self.db, self.settings, self.bot)
         self.assertIn("Сначала выбери роли", msg.answer.await_args.args[0])
 
-    def test_menu_has_button_first(self):
-        self.assertEqual(main_menu_keyboard(True).keyboard[0][0].text, BTN_NOW)
+    def test_native_menu_has_vacancies_first(self):
+        self.assertEqual(menu_commands()[0].command, "vacancies")
+        self.assertEqual(menu_commands()[0].description, BTN_NOW)
 
     def test_button_is_routed_before_fallback(self):
         names = [h.callback.__name__ for h in chat_main.router.message.handlers]

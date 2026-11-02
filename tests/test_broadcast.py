@@ -152,15 +152,13 @@ class BroadcastVideoTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[0].kwargs["caption"], text)
         self.bot.send_message.assert_not_awaited()
 
-    async def test_menu_with_new_button_is_attached(self):
-        from aiogram.types import ReplyKeyboardMarkup
-        from bot.menu import BTN_NOW
+    async def test_broadcast_removes_old_keyboard_without_opening_native_menu(self):
+        from aiogram.types import ReplyKeyboardRemove
         broadcast_id, text, video = self.load()
         await run_broadcast(self.bot, self.db, broadcast_id, text, [1], video)
         markup = self.bot.send_animation.await_args.kwargs["reply_markup"]
-        self.assertIsInstance(markup, ReplyKeyboardMarkup)
-        self.assertEqual(markup.keyboard[0][0].text, BTN_NOW)
-        self.assertIs(markup.is_persistent, False, "анонс не должен закреплять панель")
+        self.assertIsInstance(markup, ReplyKeyboardRemove)
+        self.assertTrue(markup.remove_keyboard)
 
     async def test_preview_sends_video_to_admin_only(self):
         broadcast_id, text, video = self.load()

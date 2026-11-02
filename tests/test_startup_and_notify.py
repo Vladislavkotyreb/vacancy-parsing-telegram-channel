@@ -27,25 +27,59 @@ def _settings(admin_id=1) -> Settings:
 
 
 class WaitForTelegramTest(unittest.IsolatedAsyncioTestCase):
-    async def test_retries_network_errors_then_starts(self):
+    def bot(self, **kwargs):
         bot = MagicMock()
-        bot.get_me = AsyncMock(side_effect=[_net_error(), _net_error(), MagicMock()])
+        bot.get_me = AsyncMock(**kwargs)
+        bot.set_my_commands = AsyncMock()
+        bot.set_chat_menu_button = AsyncMock()
+        return bot
+
+    async def test_retries_network_errors_then_starts(self):
+        bot = self.bot(side_effect=[_net_error(), _net_error(), MagicMock()])
         await _wait_for_telegram(bot, delays=(0, 0, 0))
         self.assertEqual(bot.get_me.await_count, 3)
 
     async def test_gives_up_after_all_retries(self):
-        bot = MagicMock()
-        bot.get_me = AsyncMock(side_effect=_net_error())
+        bot = self.bot(side_effect=_net_error())
         with self.assertRaises(TelegramNetworkError):
             await _wait_for_telegram(bot, delays=(0, 0))
         self.assertEqual(bot.get_me.await_count, 3)  # две попытки с паузой + последняя
 
     async def test_wrong_token_is_not_retried(self):
-        bot = MagicMock()
-        bot.get_me = AsyncMock(side_effect=TelegramUnauthorizedError(method=MagicMock(), message="Unauthorized"))
+        bot = self.bot(side_effect=TelegramUnauthorizedError(method=MagicMock(), message="Unauthorized"))
         with self.assertRaises(TelegramUnauthorizedError):
             await _wait_for_telegram(bot, delays=(0, 0))
         self.assertEqual(bot.get_me.await_count, 1)
+
+    async def test_native_menu_is_registered_before_polling(self):
+        from aiogram.types import MenuButtonCommands
+
+        bot = self.bot()
+        await _wait_for_telegram(bot, delays=())
+        bot.set_my_commands.assert_awaited_once()
+        self.assertEqual(bot.set_my_commands.await_args.kwargs["scope"].type, "all_private_chats")
+        self.assertEqual(
+            [command.command for command in bot.set_my_commands.await_args.args[0]],
+            ["vacancies", "myrole", "roles", "stop"],
+        )
+        bot.set_chat_menu_button.assert_awaited_once()
+        self.assertIsInstance(bot.set_chat_menu_button.await_args.kwargs["menu_button"], MenuButtonCommands)
+
+    async def test_native_menu_setup_retries_a_network_failure(self):
+        bot = self.bot()
+        bot.set_chat_menu_button.side_effect = [_net_error(), True]
+        await _wait_for_telegram(bot, delays=(0,))
+        self.assertEqual(bot.set_chat_menu_button.await_count, 2)
+        self.assertEqual(bot.set_my_commands.await_count, 2)
+
+    async def test_admin_commands_are_only_registered_for_admin(self):
+        bot = self.bot()
+        await _wait_for_telegram(bot, delays=(), admin_id=123)
+        public, admin = bot.set_my_commands.await_args_list
+        self.assertEqual(public.kwargs["scope"].type, "all_private_chats")
+        self.assertNotIn("stats", [c.command for c in public.args[0]])
+        self.assertEqual(admin.kwargs["scope"].chat_id, 123)
+        self.assertEqual([c.command for c in admin.args[0]][-2:], ["stats", "users"])
 
 
 class AdminNotifyTest(unittest.IsolatedAsyncioTestCase):

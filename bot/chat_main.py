@@ -53,7 +53,7 @@ from bot.menu import (
     BTN_MY_SUBSCRIPTION,
     BTN_NOW,
     BTN_UNSUBSCRIBE,
-    main_menu_keyboard,
+    configure_native_menu,
 )
 from bot.subscriber_service import SubscriberService
 from bot.stats import (
@@ -70,7 +70,7 @@ PID_FILE = Path(__file__).resolve().parent.parent / "logs" / "chat-bot.pid"
 # Повторное нажатие «Вакансии сейчас» раньше — просто подсказка, без новой выборки.
 NOW_COOLDOWN_SEC = 60
 NOW_TEXTS = {
-    "not_subscribed": "Сначала выбери роли — кнопка «Выбрать роли» внизу.",
+    "not_subscribed": "Сначала выбери роли — кнопка «Выбрать роли» в меню Telegram.",
     "no_cache": "Площадки сейчас не отвечают — попробуй через несколько минут.",
     "nothing_new": "Новых вакансий пока нет — всё свежее ты уже получил.\nЗагляни позже или дождись утренней подборки.",
     "digest_running": "Утренняя рассылка идёт прямо сейчас — подборка придёт через пару минут.",
@@ -115,7 +115,7 @@ STARTUP_RETRY_DELAYS_SEC = (5, 10, 20, 30, 60, 60)
 
 # Префикс отмеченной роли в клавиатуре — он же признак «роль в черновике».
 MARK = "✓ "
-STALE_BUTTON_TEXT = "Эта кнопка устарела. Нажми «Выбрать роли» в меню внизу."
+STALE_BUTTON_TEXT = "Эта кнопка устарела. Нажми «Выбрать роли» в меню Telegram."
 
 
 # Один экземпляр — через flock, а не по pid в файле. Pid-замок ломался трижды:
@@ -410,13 +410,13 @@ async def _show_vacancy_step(
     )
 
 
-async def send_welcome(message: Message, subscribed: bool = False) -> None:
+async def send_welcome(message: Message) -> None:
     await message.answer(
         "Привет! Каждый день в <b>10:00 (МСК)</b> присылаю новые вакансии в личку.\n\n"
         "Сначала выбери, где искать, потом специальность и вакансии — можно несколько.\n\n"
-        "Скрыть кнопки — /hide, вернуть — /menu.",
+        "Все действия — в кнопке «Меню» рядом с полем ввода. Она открывает и закрывает список.",
         parse_mode="HTML",
-        reply_markup=main_menu_keyboard(subscribed),
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
@@ -437,7 +437,7 @@ async def send_subscription_info(message: Message, db: VacancyDatabase) -> None:
     if not subscriber or not subscriber.get("roles"):
         await message.answer(
             f"Ты пока не подписан.\nНажми «{BTN_CHOOSE_ROLES}» и пройди настройку.",
-            reply_markup=main_menu_keyboard(subscribed=False),
+            reply_markup=ReplyKeyboardRemove(),
         )
         return
 
@@ -446,10 +446,10 @@ async def send_subscription_info(message: Message, db: VacancyDatabase) -> None:
     await message.answer(
         f"Текущая подписка: <b>{roles_text}</b>\n"
         f"Где ищу: <b>{region}</b>\n"
-        f"Изменить — «{BTN_CHOOSE_ROLES_AGAIN}»\n"
+        f"Изменить — «{BTN_CHOOSE_ROLES}» в меню Telegram\n"
         "Отписаться — «Прекратить рассылку»",
         parse_mode="HTML",
-        reply_markup=main_menu_keyboard(subscribed=True),
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
@@ -470,7 +470,7 @@ async def unsubscribe_user(message: Message, db: VacancyDatabase) -> None:
     if not _is_subscribed(message.from_user.id, db):
         await message.answer(
             "Ты не подписан на рассылку.",
-            reply_markup=main_menu_keyboard(subscribed=False),
+            reply_markup=ReplyKeyboardRemove(),
         )
         return
 
@@ -492,7 +492,9 @@ async def unsub_yes(callback: CallbackQuery, db: VacancyDatabase) -> None:
     await callback.message.edit_text(
         f"Рассылка остановлена.\nЧтобы вернуться — «{BTN_CHOOSE_ROLES}».",
     )
-    await callback.message.answer("Меню 👇", reply_markup=main_menu_keyboard(subscribed=False))
+    await callback.message.answer(
+        "Все действия — в кнопке «Меню» рядом с полем ввода.", reply_markup=ReplyKeyboardRemove(),
+    )
 
 
 @router.callback_query(F.data == UNSUB_NO)
@@ -505,28 +507,28 @@ async def unsub_no(callback: CallbackQuery, db: VacancyDatabase) -> None:
 
 @router.message(Command("start"))
 async def cmd_start(message: Message, db: VacancyDatabase) -> None:
-    subscribed = _is_subscribed(message.from_user.id, db) if message.from_user else False
-    await send_welcome(message, subscribed)
+    await send_welcome(message)
     await start_flow(message, db)
 
 
 @router.message(Command("hide"))
 async def cmd_hide(message: Message) -> None:
     await message.answer(
-        "Кнопки скрыты. Вернуть их — /menu.\nПодписка и рассылка продолжают работать.",
+        "Панель убрана. Действия доступны в кнопке «Меню» рядом с полем ввода.\n"
+        "Подписка и рассылка продолжают работать.",
         reply_markup=ReplyKeyboardRemove(),
     )
 
 
 @router.message(Command("menu"))
 async def cmd_menu(message: Message, db: VacancyDatabase) -> None:
-    subscribed = _is_subscribed(message.from_user.id, db) if message.from_user else False
     await message.answer(
-        "Меню 👇\nСкрыть кнопки — /hide. Также панель можно свернуть средствами Telegram.",
-        reply_markup=main_menu_keyboard(subscribed),
+        "Нажми «Меню» рядом с полем ввода — список действий открывается и закрывается этой кнопкой.",
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
+@router.message(Command("roles"))
 @router.message(F.text.in_({BTN_CHOOSE_ROLES, BTN_CHOOSE_ROLES_AGAIN}))
 async def btn_choose_roles(message: Message, db: VacancyDatabase) -> None:
     await start_flow(message, db)
@@ -535,6 +537,7 @@ async def btn_choose_roles(message: Message, db: VacancyDatabase) -> None:
 _now_pressed_at: dict[int, float] = {}
 
 
+@router.message(Command("vacancies"))
 @router.message(F.text == BTN_NOW)
 async def btn_now(message: Message, db: VacancyDatabase, settings: Settings, bot: Bot) -> None:
     """Новые вакансии по ролям прямо сейчас: бот ищет на площадках и присылает то, чего ещё не было.
@@ -580,8 +583,7 @@ async def btn_now(message: Message, db: VacancyDatabase, settings: Settings, bot
                 logger.exception("Кнопка: подборка для %s не ушла", user_id)
                 outcome = "error"
     if outcome in NOW_TEXTS:
-        subscribed = outcome != "not_subscribed"
-        await message.answer(NOW_TEXTS[outcome], reply_markup=main_menu_keyboard(subscribed))
+        await message.answer(NOW_TEXTS[outcome], reply_markup=ReplyKeyboardRemove())
 
 
 @router.message(F.text == BTN_MY_SUBSCRIPTION)
@@ -726,13 +728,13 @@ async def s2_save(callback: CallbackQuery, db: VacancyDatabase) -> None:
     await callback.message.edit_text(
         f"✅ Готово! Каждый день в <b>10:00 (МСК)</b> буду присылать "
         f"<b>{roles_text}</b> {region}.\n\n"
-        "Не хочешь ждать утра — нажми «🔎 Вакансии сейчас» внизу.\n"
-        "Чтобы изменить другое направление — «Выбрать роли заново».",
+        "Не хочешь ждать утра — нажми «🔎 Вакансии сейчас» в меню Telegram.\n"
+        "Чтобы изменить другое направление — «Выбрать роли» в том же меню.",
         parse_mode="HTML",
     )
     await callback.message.answer(
-        "Меню 👇",
-        reply_markup=main_menu_keyboard(subscribed=True),
+        "Все действия — в кнопке «Меню» рядом с полем ввода.",
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
@@ -887,24 +889,29 @@ async def stale_button(callback: CallbackQuery) -> None:
 
 @router.message()
 async def fallback(message: Message, db: VacancyDatabase) -> None:
-    subscribed = _is_subscribed(message.from_user.id, db) if message.from_user else False
     await message.answer(
-        "Используй кнопки меню 👇\nСкрыть кнопки — /hide, вернуть — /menu.",
-        reply_markup=main_menu_keyboard(subscribed),
+        "Выбери действие в кнопке «Меню» рядом с полем ввода.",
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
-async def _wait_for_telegram(bot: Bot, delays: tuple[float, ...] = STARTUP_RETRY_DELAYS_SEC) -> None:
+async def _wait_for_telegram(
+    bot: Bot, delays: tuple[float, ...] = STARTUP_RETRY_DELAYS_SEC, admin_id: Optional[int] = None
+) -> None:
     """Ждём связь с Телеграмом, а не падаем на старте.
 
     Исходящая сеть хостинга рвётся раз в 15–30 минут. start_polling первым делом
     зовёт getMe, и в такой момент бот выходил с ошибкой — поднимал его только
     watchdog минут через пять (так было при деплое 24.10.2026). Дальше, во время
     polling, обрывы aiogram переживает сам.
+
+    До начала polling регистрируем штатное меню. Его API-запросы при обрыве
+    сети повторяются вместе с getMe; повторная регистрация идемпотентна.
     """
     for attempt, delay in enumerate(delays, start=1):
         try:
             await bot.get_me()
+            await configure_native_menu(bot, admin_id)
             return
         except TelegramNetworkError as exc:
             logger.warning(
@@ -915,6 +922,7 @@ async def _wait_for_telegram(bot: Bot, delays: tuple[float, ...] = STARTUP_RETRY
             )
             await asyncio.sleep(delay)
     await bot.get_me()  # последняя попытка: ошибка уйдёт в лог, дальше — watchdog
+    await configure_native_menu(bot, admin_id)
 
 
 async def main() -> None:
@@ -938,7 +946,7 @@ async def main() -> None:
 
     logger.info("Чат-бот подписок запущен (polling)")
     try:
-        await _wait_for_telegram(bot)
+        await _wait_for_telegram(bot, admin_id=settings.telegram_admin_id)
         await dp.start_polling(bot)
     finally:
         _release_single_instance()

@@ -104,7 +104,7 @@ class DigestMoreTest(unittest.IsolatedAsyncioTestCase):
         self.found = self.found[:5]
         await self.run_digest()
         from aiogram.types import InlineKeyboardMarkup
-        # Кнопки «Показать остальные» нет; нижнее меню (ReplyKeyboard) — есть, это нормально.
+        # Кнопки «Показать остальные» нет; старую панель убирает ReplyKeyboardRemove.
         self.assertFalse(any(isinstance(c.kwargs.get("reply_markup"), InlineKeyboardMarkup) for c in self.calls()))
 
     async def test_overflow_is_not_marked_sent_by_digest(self):

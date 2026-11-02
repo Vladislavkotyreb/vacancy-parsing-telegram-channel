@@ -56,6 +56,10 @@ nohup .venv/bin/python -m bot.chat_main >> logs/chat-bot.log 2>&1 &
 
 ## 5. Проверка
 
+- После старта появится штатная кнопка Telegram «Меню» рядом с полем ввода:
+  открыть → закрыть → выбрать «Мои вакансии». Список регистрируется ботом,
+  настраивать его вручную в BotFather не нужно. Если ещё видна старая большая
+  панель, нажатие «Мои вакансии» уберёт её; новые подборки её не возвращают.
 - Напиши боту `/start` в личку → выбери роли
 - Проверка без отправки: `PYTHONIOENCODING=utf-8 .venv/bin/python -m bot.run_once subscribers-preview`
 - Ручная рассылка: `PYTHONIOENCODING=utf-8 .venv/bin/python -m bot.run_once subscribers`
@@ -77,6 +81,8 @@ nohup .venv/bin/python -m bot.chat_main >> logs/chat-bot.log 2>&1 &
 | Команда | Описание |
 |---------|----------|
 | `/start` | Выбор ролей: специальность → вакансии внутри неё |
+| `/vacancies` | Вакансии сейчас (пункт штатного меню Telegram) |
+| `/roles` | Выбрать или изменить роли (пункт штатного меню Telegram) |
 | `/myrole` | Текущая подписка |
 | `/stop` | Отписаться |
 | `/stats` | Сводка по подписчикам и каналу (только `TELEGRAM_ADMIN_ID`) |

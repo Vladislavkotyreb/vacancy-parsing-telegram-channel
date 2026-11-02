@@ -14,7 +14,7 @@ except ImportError:
 
 from aiogram import Bot
 from aiogram.enums import ParseMode
-from aiogram.types import InlineKeyboardMarkup, Message, ReplyKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, Message, ReplyKeyboardRemove
 from aiogram.exceptions import (
     ClientDecodeError,
     TelegramForbiddenError,
@@ -34,7 +34,6 @@ from bot.roles import get_role
 from bot.russian import format_digest_roles_label
 from bot.subscriber_collect import SourceLimited, collect_for_role, shared_feeds
 from bot.formatters import format_vacancy
-from bot.menu import main_menu_keyboard
 from bot.subscriber_formatters import format_empty_notice, format_subscriber_digest
 
 logger = logging.getLogger(__name__)
@@ -561,9 +560,9 @@ class SubscriberService:
             is_last = index == len(messages) - 1
             markup = more if is_last else None
             if markup is None and index == 0:
-                # Первое сообщение несёт актуальное нижнее меню — так подписчики,
-                # которые ничего не нажимают, тоже увидят новые кнопки.
-                markup = main_menu_keyboard(subscribed=True)
+                # Убираем старую панель. Штатное меню Telegram не занимает
+                # место при чтении и не раскрывается от входящей подборки.
+                markup = ReplyKeyboardRemove()
             delivered = await self._safe_send(user_id, message, markup) or delivered
             # Отмечаем сразу после каждого сообщения: если второе не дойдёт или
             # процесс оборвут, первое завтра не придёт повторно.
@@ -602,7 +601,7 @@ class SubscriberService:
             logger.info("Подписчик %s roles=%s: «новых нет» сегодня уже уходило", user_id, roles)
             return 0, False
 
-        delivered = await self._safe_send(user_id, text, main_menu_keyboard(subscribed=True))
+        delivered = await self._safe_send(user_id, text, ReplyKeyboardRemove())
         self.db.mark_empty_notice(user_id, today)
         self._remember_profile(user_id, delivered)
         logger.info("Подписчик %s roles=%s: новых нет — отправили уведомление", user_id, roles)
@@ -626,7 +625,7 @@ class SubscriberService:
             logger.exception("Не удалось сохранить профиль подписчика %s", user_id)
 
     async def _safe_send(
-        self, chat_id: int, text: str, reply_markup: Optional[Union[InlineKeyboardMarkup, ReplyKeyboardMarkup]] = None
+        self, chat_id: int, text: str, reply_markup: Optional[Union[InlineKeyboardMarkup, ReplyKeyboardRemove]] = None
     ) -> Optional[Message]:
         retries = 0
         flood_waits = 0

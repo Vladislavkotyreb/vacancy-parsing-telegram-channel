@@ -3,8 +3,8 @@
 Текст лежит в файле в репозитории (`broadcasts/<id>.html`), id рассылки — имя
 файла. Если рядом лежит `broadcasts/<id>.mp4`, текст уходит подписью к нему:
 видео отправляется анимацией (без звука, Телеграм крутит его по кругу), файл
-загружается один раз, дальше уходит по file_id. К каждому сообщению прикладываем
-нижнее меню — так новые кнопки появляются сразу, а не со следующей подборкой. Доставка отмечается для каждого получателя только после ответа Телеграма,
+загружается один раз, дальше уходит по file_id. Старую нижнюю клавиатуру убираем:
+действия доступны в штатном меню Telegram. Доставка отмечается для каждого получателя только после ответа Телеграма,
 поэтому прерванную рассылку можно перезапустить: дошедшим повторно не придёт.
 """
 
@@ -21,10 +21,9 @@ from typing import Iterable, Optional
 from aiogram import Bot
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramForbiddenError, TelegramNetworkError, TelegramRetryAfter
-from aiogram.types import FSInputFile
+from aiogram.types import FSInputFile, ReplyKeyboardRemove
 
 from bot.database import VacancyDatabase
-from bot.menu import main_menu_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +146,7 @@ async def send_preview(
     bot: Bot, admin_id: int, text: str, video: Optional[BroadcastVideo] = None
 ) -> None:
     """Превью только админу: отметки не ставятся, рассылка не начинается."""
-    await _send(bot, admin_id, text, video, main_menu_keyboard(True))
+    await _send(bot, admin_id, text, video, ReplyKeyboardRemove())
 
 
 async def run_broadcast(
@@ -166,8 +165,7 @@ async def run_broadcast(
             stats.already_sent += 1
             continue
         try:
-            subscribed = bool(db.get_subscriber_roles(user_id))
-            await _send(bot, user_id, text, video, main_menu_keyboard(subscribed))
+            await _send(bot, user_id, text, video, ReplyKeyboardRemove())
         except TelegramForbiddenError:
             # Заблокировал бота — отписываем, как это делает и утренняя рассылка.
             db.deactivate_subscriber(user_id, reason="blocked")
