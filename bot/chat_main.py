@@ -54,6 +54,7 @@ from bot.menu import (
     BTN_NOW,
     BTN_UNSUBSCRIBE,
     configure_native_menu,
+    reply_keyboard,
 )
 from bot.subscriber_service import SubscriberService
 from bot.stats import (
@@ -414,9 +415,9 @@ async def send_welcome(message: Message) -> None:
     await message.answer(
         "Привет! Каждый день в <b>10:00 (МСК)</b> присылаю новые вакансии в личку.\n\n"
         "Сначала выбери, где искать, потом специальность и вакансии — можно несколько.\n\n"
-        "Все действия — в кнопке «Меню» рядом с полем ввода. Она открывает и закрывает список.",
+        "Значок справа в поле ввода скрывает и возвращает кнопки.",
         parse_mode="HTML",
-        reply_markup=ReplyKeyboardRemove(),
+        reply_markup=reply_keyboard(),
     )
 
 
@@ -437,7 +438,6 @@ async def send_subscription_info(message: Message, db: VacancyDatabase) -> None:
     if not subscriber or not subscriber.get("roles"):
         await message.answer(
             f"Ты пока не подписан.\nНажми «{BTN_CHOOSE_ROLES}» и пройди настройку.",
-            reply_markup=ReplyKeyboardRemove(),
         )
         return
 
@@ -449,7 +449,6 @@ async def send_subscription_info(message: Message, db: VacancyDatabase) -> None:
         f"Изменить — «{BTN_CHOOSE_ROLES}» в меню Telegram\n"
         "Отписаться — «Прекратить рассылку»",
         parse_mode="HTML",
-        reply_markup=ReplyKeyboardRemove(),
     )
 
 
@@ -470,7 +469,6 @@ async def unsubscribe_user(message: Message, db: VacancyDatabase) -> None:
     if not _is_subscribed(message.from_user.id, db):
         await message.answer(
             "Ты не подписан на рассылку.",
-            reply_markup=ReplyKeyboardRemove(),
         )
         return
 
@@ -493,7 +491,7 @@ async def unsub_yes(callback: CallbackQuery, db: VacancyDatabase) -> None:
         f"Рассылка остановлена.\nЧтобы вернуться — «{BTN_CHOOSE_ROLES}».",
     )
     await callback.message.answer(
-        "Все действия — в кнопке «Меню» рядом с полем ввода.", reply_markup=ReplyKeyboardRemove(),
+        "Все действия — в кнопке «Меню» рядом с полем ввода.",
     )
 
 
@@ -514,7 +512,7 @@ async def cmd_start(message: Message, db: VacancyDatabase) -> None:
 @router.message(Command("hide"))
 async def cmd_hide(message: Message) -> None:
     await message.answer(
-        "Панель убрана. Действия доступны в кнопке «Меню» рядом с полем ввода.\n"
+        "Панель убрана. Чтобы вернуть кнопки, отправь /menu.\n"
         "Подписка и рассылка продолжают работать.",
         reply_markup=ReplyKeyboardRemove(),
     )
@@ -523,8 +521,8 @@ async def cmd_hide(message: Message) -> None:
 @router.message(Command("menu"))
 async def cmd_menu(message: Message, db: VacancyDatabase) -> None:
     await message.answer(
-        "Нажми «Меню» рядом с полем ввода — список действий открывается и закрывается этой кнопкой.",
-        reply_markup=ReplyKeyboardRemove(),
+        "Значок справа в поле ввода скрывает и возвращает кнопки.",
+        reply_markup=reply_keyboard(),
     )
 
 
@@ -583,7 +581,7 @@ async def btn_now(message: Message, db: VacancyDatabase, settings: Settings, bot
                 logger.exception("Кнопка: подборка для %s не ушла", user_id)
                 outcome = "error"
     if outcome in NOW_TEXTS:
-        await message.answer(NOW_TEXTS[outcome], reply_markup=ReplyKeyboardRemove())
+        await message.answer(NOW_TEXTS[outcome])
 
 
 @router.message(F.text == BTN_MY_SUBSCRIPTION)
@@ -734,7 +732,6 @@ async def s2_save(callback: CallbackQuery, db: VacancyDatabase) -> None:
     )
     await callback.message.answer(
         "Все действия — в кнопке «Меню» рядом с полем ввода.",
-        reply_markup=ReplyKeyboardRemove(),
     )
 
 
@@ -890,8 +887,7 @@ async def stale_button(callback: CallbackQuery) -> None:
 @router.message()
 async def fallback(message: Message, db: VacancyDatabase) -> None:
     await message.answer(
-        "Выбери действие в кнопке «Меню» рядом с полем ввода.",
-        reply_markup=ReplyKeyboardRemove(),
+        "Выбери действие в меню Telegram. Чтобы вернуть панель кнопок, отправь /menu.",
     )
 
 

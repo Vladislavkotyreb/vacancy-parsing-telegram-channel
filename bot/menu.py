@@ -1,21 +1,28 @@
-"""Штатная кнопка «Меню» Telegram; открытие и закрытие выполняет клиент.
-
-setMyCommands + setChatMenuButton(MenuButtonCommands), без ReplyKeyboardMarkup.
-Тексты старой клавиатуры сохранены для кнопок, уже находящихся у пользователей.
-"""
-
 from __future__ import annotations
 
 from typing import Optional
 
 from aiogram import Bot
-from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeChat, MenuButtonCommands
+from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeChat, MenuButtonCommands, KeyboardButton, ReplyKeyboardMarkup
 
 BTN_NOW = "🔎 Вакансии сейчас"
 BTN_MY_SUBSCRIPTION = "Мои вакансии"
 BTN_UNSUBSCRIBE = "Прекратить рассылку"
 BTN_CHOOSE_ROLES = "Выбрать роли"
 BTN_CHOOSE_ROLES_AGAIN = "Выбрать роли заново"
+
+
+def reply_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_NOW)],
+            [KeyboardButton(text=BTN_MY_SUBSCRIPTION), KeyboardButton(text=BTN_CHOOSE_ROLES)],
+            [KeyboardButton(text=BTN_UNSUBSCRIBE)],
+        ],
+        resize_keyboard=True,
+        is_persistent=False,
+        one_time_keyboard=False,
+    )
 
 
 def menu_commands() -> list[BotCommand]:

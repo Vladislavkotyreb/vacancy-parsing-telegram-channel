@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 
 from aiogram import Bot
 from aiogram.methods import SendMessage
-from aiogram.types import Chat, Message, ReplyKeyboardRemove, User
+from aiogram.types import Chat, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove, User
 
 from bot.chat_main import _now_pressed_at, router
 from bot.config import Settings
@@ -54,18 +54,20 @@ class MenuVisibilityTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.chat_id, self.user_id)
         return request
 
-    async def test_legacy_hide_removes_keyboard_and_points_to_native_menu(self):
+    async def test_hide_removes_keyboard_and_points_to_restore_command(self):
         request = await self.command("/hide")
         self.assertIsInstance(request.reply_markup, ReplyKeyboardRemove)
         self.assertEqual(request.reply_markup.model_dump(exclude_none=True), {"remove_keyboard": True})
-        self.assertIn("«Меню» рядом с полем ввода", request.text)
+        self.assertIn("/menu", request.text)
         self.assertIn("продолжают работать", request.text)
 
-    async def test_legacy_menu_does_not_restore_the_old_keyboard(self):
+    async def test_menu_restores_collapsible_keyboard(self):
         self.db.set_subscriber_roles(self.user_id, ["backend_python"])
         request = await self.command("/menu")
-        self.assertIsInstance(request.reply_markup, ReplyKeyboardRemove)
-        self.assertIn("«Меню» рядом с полем ввода", request.text)
+        self.assertIsInstance(request.reply_markup, ReplyKeyboardMarkup)
+        self.assertFalse(request.reply_markup.is_persistent)
+        self.assertFalse(request.reply_markup.one_time_keyboard)
+        self.assertEqual(request.reply_markup.keyboard[0][0].text, BTN_NOW)
 
     async def test_native_roles_action_opens_region_selection(self):
         request = await self.command("/roles")
@@ -73,11 +75,11 @@ class MenuVisibilityTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("s0:reg:cis", callbacks)
         self.assertIsNone(self.db.get_subscriber(self.user_id))
 
-    async def test_native_myrole_action_removes_old_keyboard(self):
+    async def test_native_myrole_action_leaves_keyboard_unchanged(self):
         self.db.set_subscriber_roles(self.user_id, ["backend_python"])
         request = await self.command("/myrole")
         self.assertIn("Текущая подписка", request.text)
-        self.assertIsInstance(request.reply_markup, ReplyKeyboardRemove)
+        self.assertIsNone(request.reply_markup)
 
     async def test_native_stop_action_still_requires_confirmation(self):
         self.db.set_subscriber_roles(self.user_id, ["backend_python"])
@@ -89,25 +91,25 @@ class MenuVisibilityTest(unittest.IsolatedAsyncioTestCase):
     async def test_native_vacancies_action_is_routed_before_fallback(self):
         request = await self.command("/vacancies")
         self.assertIn("Сначала выбери роли", request.text)
-        self.assertIsInstance(request.reply_markup, ReplyKeyboardRemove)
+        self.assertIsNone(request.reply_markup)
 
     async def test_old_vacancies_button_still_works(self):
         request = await self.command(BTN_NOW)
         self.assertIn("Сначала выбери роли", request.text)
-        self.assertIsInstance(request.reply_markup, ReplyKeyboardRemove)
+        self.assertIsNone(request.reply_markup)
 
     async def test_old_choose_roles_button_still_works(self):
         request = await self.command(BTN_CHOOSE_ROLES)
         self.assertIn("Шаг 1 из 3", request.text)
 
-    async def test_unknown_text_points_to_native_menu_and_clears_old_panel(self):
+    async def test_unknown_text_points_to_restore_command(self):
         request = await self.command("Привет")
-        self.assertIn("«Меню» рядом с полем ввода", request.text)
-        self.assertIsInstance(request.reply_markup, ReplyKeyboardRemove)
+        self.assertIn("/menu", request.text)
+        self.assertIsNone(request.reply_markup)
 
     async def test_menu_without_subscription_does_not_subscribe(self):
         request = await self.command("/menu")
-        self.assertIsInstance(request.reply_markup, ReplyKeyboardRemove)
+        self.assertIsInstance(request.reply_markup, ReplyKeyboardMarkup)
         self.assertIsNone(self.db.get_subscriber(self.user_id))
 
     async def test_hide_and_restore_preserve_roles_and_region(self):
@@ -124,5 +126,5 @@ class MenuVisibilityTest(unittest.IsolatedAsyncioTestCase):
         self.db.deactivate_subscriber(self.user_id)
         await self.command("/hide")
         request = await self.command("/menu")
-        self.assertIsInstance(request.reply_markup, ReplyKeyboardRemove)
+        self.assertIsInstance(request.reply_markup, ReplyKeyboardMarkup)
         self.assertEqual(self.db.list_active_subscribers(), [])

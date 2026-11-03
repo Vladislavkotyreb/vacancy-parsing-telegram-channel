@@ -5,7 +5,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Iterable, Optional, Union
+from typing import Iterable, Optional
 
 try:
     from zoneinfo import ZoneInfo
@@ -14,7 +14,7 @@ except ImportError:
 
 from aiogram import Bot
 from aiogram.enums import ParseMode
-from aiogram.types import InlineKeyboardMarkup, Message, ReplyKeyboardRemove
+from aiogram.types import InlineKeyboardMarkup, Message
 from aiogram.exceptions import (
     ClientDecodeError,
     TelegramForbiddenError,
@@ -559,10 +559,6 @@ class SubscriberService:
         for index, message in enumerate(messages):
             is_last = index == len(messages) - 1
             markup = more if is_last else None
-            if markup is None and index == 0:
-                # Убираем старую панель. Штатное меню Telegram не занимает
-                # место при чтении и не раскрывается от входящей подборки.
-                markup = ReplyKeyboardRemove()
             delivered = await self._safe_send(user_id, message, markup) or delivered
             # Отмечаем сразу после каждого сообщения: если второе не дойдёт или
             # процесс оборвут, первое завтра не придёт повторно.
@@ -601,7 +597,7 @@ class SubscriberService:
             logger.info("Подписчик %s roles=%s: «новых нет» сегодня уже уходило", user_id, roles)
             return 0, False
 
-        delivered = await self._safe_send(user_id, text, ReplyKeyboardRemove())
+        delivered = await self._safe_send(user_id, text)
         self.db.mark_empty_notice(user_id, today)
         self._remember_profile(user_id, delivered)
         logger.info("Подписчик %s roles=%s: новых нет — отправили уведомление", user_id, roles)
@@ -625,7 +621,7 @@ class SubscriberService:
             logger.exception("Не удалось сохранить профиль подписчика %s", user_id)
 
     async def _safe_send(
-        self, chat_id: int, text: str, reply_markup: Optional[Union[InlineKeyboardMarkup, ReplyKeyboardRemove]] = None
+        self, chat_id: int, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None
     ) -> Optional[Message]:
         retries = 0
         flood_waits = 0

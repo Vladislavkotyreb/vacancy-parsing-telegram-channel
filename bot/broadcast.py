@@ -21,7 +21,7 @@ from typing import Iterable, Optional
 from aiogram import Bot
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramForbiddenError, TelegramNetworkError, TelegramRetryAfter
-from aiogram.types import FSInputFile, ReplyKeyboardRemove
+from aiogram.types import FSInputFile
 
 from bot.database import VacancyDatabase
 
@@ -146,7 +146,7 @@ async def send_preview(
     bot: Bot, admin_id: int, text: str, video: Optional[BroadcastVideo] = None
 ) -> None:
     """Превью только админу: отметки не ставятся, рассылка не начинается."""
-    await _send(bot, admin_id, text, video, ReplyKeyboardRemove())
+    await _send(bot, admin_id, text, video)
 
 
 async def run_broadcast(
@@ -165,7 +165,7 @@ async def run_broadcast(
             stats.already_sent += 1
             continue
         try:
-            await _send(bot, user_id, text, video, ReplyKeyboardRemove())
+            await _send(bot, user_id, text, video)
         except TelegramForbiddenError:
             # Заблокировал бота — отписываем, как это делает и утренняя рассылка.
             db.deactivate_subscriber(user_id, reason="blocked")

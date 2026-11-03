@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import AsyncMock
 
-from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardRemove
+from aiogram.types import InlineKeyboardMarkup
 
 from bot import chat_main
 from bot.config import Settings
@@ -99,7 +99,7 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats.failed_users, [])
         self.assertTrue(any(c == 10 for c, _, _ in self.bot.calls))
 
-    async def test_digest_removes_old_keyboard_without_opening_native_menu(self):
+    async def test_digest_leaves_keyboard_unchanged(self):
         self.db.set_subscriber_roles(10, ["backend_python"])
 
         async def collect(settings, role):
@@ -107,8 +107,7 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
         with mock.patch("bot.subscriber_service.collect_for_role", side_effect=collect):
             await self.service.run_daily_digests()
         markup = self.bot.calls[0][2]
-        self.assertIsInstance(markup, ReplyKeyboardRemove)
-        self.assertTrue(markup.remove_keyboard)
+        self.assertIsNone(markup)
 
     async def test_overflow_digest_still_has_show_more_button(self):
         self.db.set_subscriber_roles(10, ["backend_python"])
