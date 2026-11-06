@@ -938,6 +938,11 @@ async def main() -> None:
     dp.update.middleware(InjectMiddleware(db=db, settings=settings))
     dp.update.middleware(TrackActivityMiddleware(db, settings.timezone))
     dp.callback_query.middleware(StaleCallbackMiddleware())
+    # Private application demo: temporary, owner-only.
+    if os.getenv("APPLICATION_DEMO_ENABLED", "").strip() == "1":
+        if settings.telegram_admin_id and settings.telegram_admin_id > 0:
+            from bot.application_demo import create_demo_router
+            dp.include_router(create_demo_router(settings.telegram_admin_id))
     dp.include_router(router)
 
     logger.info("Чат-бот подписок запущен (polling)")
