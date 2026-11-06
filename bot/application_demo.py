@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import re
 import secrets
+import sys
 import time
 import zipfile
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 from xml.etree import ElementTree
 
@@ -20,6 +23,18 @@ from bot.menu import BTN_CHOOSE_ROLES, BTN_CHOOSE_ROLES_AGAIN, BTN_MY_SUBSCRIPTI
 TTL_SECONDS = 30 * 60
 TEXT_LIMIT = 100 * 1024
 DOCX_LIMIT = 2 * 1024 * 1024
+PDF_LIMIT = 2 * 1024 * 1024
+PDF_TIMEOUT = 8
+PDF_MESSAGES = {
+    "encrypted": "PDF защищён паролем. Пришлите копию без пароля.",
+    "no_text": "В PDF не найден текст. Возможно, это скан: распознавание изображений (OCR) пока не подключено. Пришлите PDF с выделяемым текстом или текст резюме сообщением.",
+    "pages": "В PDF больше 20 страниц. Пришлите короткую версию резюме.",
+    "size": "PDF должен быть не больше 2 МБ.",
+    "text_size": "В PDF слишком много текста. Пришлите короткую версию резюме.",
+    "invalid": "Не удалось прочитать PDF. Пришлите другую копию PDF или текст резюме сообщением.",
+    "unavailable": "Чтение PDF временно недоступно. Можно прислать текст резюме сообщением.",
+    "timeout": "PDF слишком долго обрабатывается. Пришлите упрощённую копию PDF или текст резюме сообщением.",
+}
 PREFIX = "apd:"
 ROLES = {"design": "Продуктовый дизайнер", "front": "Frontend-разработчик", "python": "Python-разработчик"}
 JOBS = {
@@ -47,7 +62,14 @@ def extract_profile(text: str) -> dict:
     if len(cleaned) < 20:
         raise ValueError("Пришлите хотя бы пару предложений об опыте и навыках.")
     lower = cleaned.lower()
-    role = "python" if "python" in lower else "front" if any(word in lower for word in ("react", "frontend", "javascript", "фронтенд")) else "design"
+    titles = {
+        "design": r"продуктов\w*\s+дизайнер\w*|product\s+designer|ux(?:/ui)?[-\s]+(?:designer|дизайнер)|ui[-\s]+(?:designer|дизайнер)",
+        "front": r"front[-\s]?end[-\s]+(?:developer|engineer|разработчик)|фронтенд[-\s]+разработчик|(?:react|javascript|typescript)[-\s]+(?:developer|разработчик)",
+        "python": r"python[-\s]+(?:developer|engineer|разработчик)",
+    }
+    matches = [(match.start(), role) for role, pattern in titles.items() for match in [re.search(pattern, lower[:1000])] if match]
+    # A profession near the heading is stronger evidence than skills mentioned later.
+    role = min(matches)[1] if matches else "python" if "python" in lower else "front" if any(word in lower for word in ("react", "frontend", "javascript", "фронтенд")) else "design"
     return {"role": role, "facts": cleaned[:700], "truncated": len(cleaned) > 700}
 
 
@@ -57,7 +79,7 @@ def extract_document(data: bytes, filename: str) -> str:
             raise ValueError("TXT должен быть не больше 100 КБ.")
         return data.decode("utf-8-sig")
     if not filename.lower().endswith(".docx"):
-        raise ValueError("В этом тесте доступны текст, TXT и DOCX. Из PDF скопируйте текст резюме.")
+        raise ValueError("Поддерживаются PDF, TXT и DOCX. Пришлите файл в одном из этих форматов.")
     if len(data) > DOCX_LIMIT:
         raise ValueError("DOCX должен быть не больше 2 МБ.")
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
@@ -73,6 +95,44 @@ def extract_document(data: bytes, filename: str) -> str:
         raise ValueError("Не удалось безопасно прочитать DOCX. Пришлите текст.")
     root = ElementTree.fromstring(xml)
     return " ".join(node.text or "" for node in root.iter("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t"))
+
+
+async def extract_pdf(data: bytes) -> str:
+    """One bounded child per owner request; kill and reap it on timeout/cancellation."""
+    if len(data) > PDF_LIMIT:
+        raise ValueError(PDF_MESSAGES["size"])
+    process = await asyncio.create_subprocess_exec(
+        sys.executable, "-I", str(Path(__file__).with_name("application_demo_pdf.py")),
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        output, _ = await asyncio.wait_for(process.communicate(data), timeout=PDF_TIMEOUT)
+    except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
+        if process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+        await process.communicate()
+        if isinstance(exc, asyncio.CancelledError):
+            raise
+        raise ValueError(PDF_MESSAGES["timeout"]) from None
+    if process.returncode != 0 or len(output) > TEXT_LIMIT * 6 + 1024:
+        raise ValueError(PDF_MESSAGES["invalid"])
+    try:
+        result = json.loads(output)
+    except (UnicodeError, json.JSONDecodeError):
+        raise ValueError(PDF_MESSAGES["invalid"]) from None
+    if not isinstance(result, dict):
+        raise ValueError(PDF_MESSAGES["invalid"])
+    error = result.get("error")
+    if error:
+        raise ValueError(PDF_MESSAGES.get(error, PDF_MESSAGES["invalid"]) if isinstance(error, str) else PDF_MESSAGES["invalid"])
+    text = result.get("text")
+    if not isinstance(text, str) or len(text.encode("utf-8")) > TEXT_LIMIT:
+        raise ValueError(PDF_MESSAGES["invalid"])
+    return text
 
 
 class LimitedBuffer(io.BytesIO):
@@ -189,7 +249,7 @@ class ApplicationDemo:
 
     async def ask_resume(self, message):
         self.session.stage = "resume"
-        await self.show(message, "Для персонального письма нужен ваш опыт. Пришлите текст резюме, TXT до 100 КБ или DOCX до 2 МБ. PDF в этом тесте не читается: скопируйте из него текст.\n\nМожно пройти тест на вымышленном примере.", [("Использовать пример", "example", "")])
+        await self.show(message, "Для персонального письма нужен ваш опыт. Пришлите резюме в PDF или DOCX до 2 МБ, TXT до 100 КБ либо текст сообщением. PDF: до 20 страниц, с выделяемым текстом; сканы пока не распознаются.\n\nМожно пройти тест на вымышленном примере.", [("Использовать пример", "example", "")])
 
     async def profile(self, message, text):
         session = self.session
@@ -304,14 +364,15 @@ class ApplicationDemo:
                 if message.document:
                     doc = message.document
                     name = doc.file_name or ""
-                    if not name.lower().endswith((".txt", ".docx")):
-                        raise ValueError("Поддерживаются TXT и DOCX. Для PDF пришлите текст резюме.")
-                    limit = TEXT_LIMIT if name.lower().endswith(".txt") else DOCX_LIMIT
+                    suffix = Path(name).suffix.lower()
+                    if suffix not in {".txt", ".docx", ".pdf"}:
+                        raise ValueError("Поддерживаются PDF, TXT и DOCX. Можно прислать текст резюме сообщением.")
+                    limit = {".txt": TEXT_LIMIT, ".docx": DOCX_LIMIT, ".pdf": PDF_LIMIT}[suffix]
                     if not doc.file_size or doc.file_size > limit:
-                        raise ValueError("Файл слишком большой: максимум 100 КБ для TXT или 2 МБ для DOCX.")
+                        raise ValueError("Файл слишком большой: максимум 100 КБ для TXT или 2 МБ для PDF/DOCX.")
                     with LimitedBuffer(limit) as buffer:
                         await message.bot.download(doc, destination=buffer, timeout=20)
-                        text = extract_document(buffer.getvalue(), name)
+                        text = await extract_pdf(buffer.getvalue()) if suffix == ".pdf" else extract_document(buffer.getvalue(), name)
                 if not text or len(text.encode("utf-8")) > TEXT_LIMIT:
                     raise ValueError("Пришлите текст резюме до 100 КБ.")
                 if self.active() is not session:

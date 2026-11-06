@@ -1,6 +1,7 @@
 """Temporary deployment checks; no process, network, or service operations."""
 import importlib.util
 import io
+import json
 import os
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -133,6 +134,136 @@ class PrivateApplicationInstallerTest(unittest.TestCase):
             started.assert_called_once_with(self.root.resolve())
             self.assertIn('install complete', output.getvalue())
         installer.sys.modules.pop('_private_test_dependency', None)
+
+    def upgrade_candidates(self):
+        module = self.root / 'new_candidate.py'
+        helper = self.root / 'pdf_candidate.py'
+        module.write_bytes(b'# upgraded application demo\n')
+        helper.write_bytes(b'# new PDF worker\n')
+        return module, helper
+
+    def test_upgrade_preserves_original_backup_and_full_rollback(self):
+        original, installed, before = self.installed(prior_module=True)
+        module, helper = self.upgrade_candidates()
+        backup_path = self.root / installer.BACKUP
+        backups = {path.name: path.read_bytes() for path in backup_path.iterdir() if path.name.isdigit()}
+        with mock.patch.object(installer, 'owner_id', return_value=123), \
+                mock.patch.object(installer, 'check_upgrade') as checked, \
+                mock.patch.object(installer, 'stop') as stopped, \
+                mock.patch.object(installer, 'start', return_value=789):
+            self.assertEqual(installer.upgrade(self.root, module, helper), 789)
+        checked.assert_called_once()
+        stopped.assert_called_once_with(self.root)
+        updated = json.loads((backup_path / 'manifest.json').read_bytes())
+        for name in installer.FILES:
+            self.assertEqual(updated[name]['original'], before[name]['original'])
+        self.assertEqual(updated[installer.PDF_FILE]['original'], None)
+        self.assertEqual(updated['bot/application_demo.py']['installed'], installer.digest(module.read_bytes()))
+        self.assertEqual(updated[installer.PDF_FILE]['installed'], installer.digest(helper.read_bytes()))
+        self.assertEqual({name: (backup_path / name).read_bytes() for name in backups}, backups)
+        for name in installer.FILES[:3]:
+            self.assertEqual((self.root / name).read_bytes(), installed[name])
+        (self.root / installer.PDF_FILE).write_bytes(b'# external worker edit\n')
+        with self.assertRaisesRegex(RuntimeError, 'External edit'):
+            installer.restore(self.root, updated)
+        self.assertEqual((self.root / installer.PDF_FILE).read_bytes(), b'# external worker edit\n')
+        (self.root / installer.PDF_FILE).write_bytes(helper.read_bytes())
+        installer.restore(self.root, updated)
+        for name, data in original.items():
+            self.assertEqual((self.root / name).read_bytes(), data)
+        self.assertFalse((self.root / installer.PDF_FILE).exists())
+
+    def test_upgrade_failure_restores_previous_module_and_manifest(self):
+        _, installed, _ = self.installed()
+        module, helper = self.upgrade_candidates()
+        manifest_path = self.root / installer.BACKUP / 'manifest.json'
+        before = manifest_path.read_bytes()
+        with mock.patch.object(installer, 'owner_id', return_value=123), \
+                mock.patch.object(installer, 'check_upgrade'), mock.patch.object(installer, 'stop'), \
+                mock.patch.object(installer, 'lock_free', return_value=True), \
+                mock.patch.object(installer, 'start', side_effect=[RuntimeError('startup failed'), 456]) as started:
+            with self.assertRaisesRegex(RuntimeError, 'startup failed'):
+                installer.upgrade(self.root, module, helper)
+        self.assertEqual(started.call_count, 2)
+        self.assertEqual((self.root / 'bot/application_demo.py').read_bytes(), installed['bot/application_demo.py'])
+        self.assertEqual(manifest_path.read_bytes(), before)
+        self.assertFalse((self.root / installer.PDF_FILE).exists())
+        self.assertTrue((self.root / installer.ACTIVE).exists())
+
+    def test_upgrade_preflight_failure_leaves_running_install_unchanged(self):
+        _, installed, _ = self.installed()
+        module, helper = self.upgrade_candidates()
+        with mock.patch.object(installer, 'owner_id', return_value=123), \
+                mock.patch.object(installer, 'check_upgrade', side_effect=RuntimeError('preflight failed')), \
+                mock.patch.object(installer, 'stop') as stopped:
+            with self.assertRaisesRegex(RuntimeError, 'preflight failed'):
+                installer.upgrade(self.root, module, helper)
+        stopped.assert_not_called()
+        self.assertEqual((self.root / 'bot/application_demo.py').read_bytes(), installed['bot/application_demo.py'])
+        self.assertFalse((self.root / installer.PDF_FILE).exists())
+
+    def test_upgrade_rejects_external_edits_and_unmanaged_worker(self):
+        self.installed()
+        module, helper = self.upgrade_candidates()
+        with mock.patch.object(installer, 'stop') as stopped:
+            (self.root / installer.PDF_FILE).write_bytes(b'# someone else owns this\n')
+            with self.assertRaisesRegex(RuntimeError, 'Unmanaged'):
+                installer.upgrade(self.root, module, helper)
+            (self.root / installer.PDF_FILE).unlink()
+            (self.root / '.env').write_bytes(b'EXTERNAL=change\n')
+            with self.assertRaisesRegex(RuntimeError, 'External edit'):
+                installer.upgrade(self.root, module, helper)
+        stopped.assert_not_called()
+
+    def test_upgrade_requires_active_marker(self):
+        self.installed()
+        (self.root / installer.ACTIVE).unlink()
+        module, helper = self.upgrade_candidates()
+        with mock.patch.object(installer, 'stop') as stopped, self.assertRaisesRegex(RuntimeError, 'active demo'):
+            installer.upgrade(self.root, module, helper)
+        stopped.assert_not_called()
+
+    def test_upgrade_preflight_stages_siblings_and_checks_exact_dependency(self):
+        modules = {
+            'bot/application_demo.py': b'from pathlib import Path\nfrom aiogram import Router\ndef create_demo_router(owner):\n    assert Path(__file__).with_name("application_demo_pdf.py").exists()\n    return Router()\n',
+            installer.PDF_FILE: b'def extract_pdf(data):\n    return "test"\n',
+        }
+        class FakeRouter:
+            pass
+        with mock.patch.dict('sys.modules', {'pypdf': SimpleNamespace(__version__='5.9.0'), 'aiogram': SimpleNamespace(Router=FakeRouter)}):
+            installer.check_upgrade(modules, 123)
+        with mock.patch.dict('sys.modules', {'pypdf': SimpleNamespace(__version__='6.0.0')}), self.assertRaisesRegex(RuntimeError, 'pypdf==5.9.0'):
+            installer.check_upgrade(modules, 123)
+
+    def test_fresh_install_can_backup_and_restore_existing_pdf_helper(self):
+        module, helper = self.upgrade_candidates()
+        prior = b'# existing helper owned by the server\n'
+        installer.write(self.root / installer.PDF_FILE, prior, 0o640)
+        original, patched = installer.prepare(self.root, module, helper)
+        manifest = installer.backup(self.root, original, patched)
+        for name, data in patched.items():
+            installer.write(self.root / name, data, manifest[name]['mode'])
+        self.assertEqual((self.root / installer.PDF_FILE).read_bytes(), helper.read_bytes())
+        self.assertEqual(manifest[installer.PDF_FILE]['original'], installer.digest(prior))
+        installer.restore(self.root, manifest)
+        self.assertEqual((self.root / installer.PDF_FILE).read_bytes(), prior)
+        self.assertEqual(stat.S_IMODE((self.root / installer.PDF_FILE).stat().st_mode), 0o640)
+
+    def test_failed_later_upgrade_preserves_previously_installed_worker(self):
+        self.installed()
+        module, helper = self.upgrade_candidates()
+        with mock.patch.object(installer, 'owner_id', return_value=123), \
+                mock.patch.object(installer, 'check_upgrade'), mock.patch.object(installer, 'stop'), \
+                mock.patch.object(installer, 'lock_free', return_value=True), \
+                mock.patch.object(installer, 'start', side_effect=[123, RuntimeError('failed second start'), 456]):
+            installer.upgrade(self.root, module, helper)
+            previous_helper = (self.root / installer.PDF_FILE).read_bytes()
+            previous_manifest = (self.root / installer.BACKUP / 'manifest.json').read_bytes()
+            helper.write_bytes(b'# next worker version\n')
+            with self.assertRaisesRegex(RuntimeError, 'failed second start'):
+                installer.upgrade(self.root, module, helper)
+        self.assertEqual((self.root / installer.PDF_FILE).read_bytes(), previous_helper)
+        self.assertEqual((self.root / installer.BACKUP / 'manifest.json').read_bytes(), previous_manifest)
 
 
 if __name__ == '__main__':

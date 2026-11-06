@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install/roll back the private demo in the current bot, using its existing venv."""
+"""Install, upgrade, or roll back the private demo using the bot's existing venv."""
 import argparse
 import ast
 import fcntl
@@ -17,6 +17,7 @@ import tempfile
 import time
 
 FILES = ('bot/chat_main.py', '.env', 'deploy/isp/autodeploy.sh', 'bot/application_demo.py')
+PDF_FILE = 'bot/application_demo_pdf.py'
 BACKUP = 'logs/private-application-test-backup'
 ACTIVE = 'logs/private-application-test.active'
 HOOK = '''    # Private application demo: temporary, owner-only.
@@ -98,8 +99,9 @@ def check_module(path, owner):
         sys.modules.pop('_private_demo_candidate', None)
 
 
-def prepare(root, module_path):
-    original = {name: read(root / name) for name in FILES}
+def prepare(root, module_path, pdf_path=None):
+    names = FILES + ((PDF_FILE,) if pdf_path else ())
+    original = {name: read(root / name) for name in names}
     if any(original[name] is None for name in FILES[:3]):
         raise RuntimeError('Missing existing bot, .env, or autodeploy script')
     if b'APPLICATION_DEMO_ENABLED' in original[FILES[0]]:
@@ -110,6 +112,8 @@ def prepare(root, module_path):
     patched[FILES[1]] = enable_env(original[FILES[1]])
     patched[FILES[2]] = insert_once(original[FILES[2]], b'LOG_DIR="$BOT_DIR/logs"\n', GUARD.encode())
     patched[FILES[3]] = module_path.read_bytes()
+    if pdf_path:
+        patched[PDF_FILE] = pdf_path.read_bytes()
     return original, patched
 
 
@@ -117,7 +121,8 @@ def backup(root, original, patched):
     directory = root / BACKUP
     directory.mkdir(mode=0o700)
     manifest = {}
-    for index, name in enumerate(FILES):
+    names = FILES + ((PDF_FILE,) if PDF_FILE in original else ())
+    for index, name in enumerate(names):
         source = root / name
         mode = stat.S_IMODE(source.stat().st_mode) if source.exists() else 0o644
         filename = str(index)
@@ -129,10 +134,11 @@ def backup(root, original, patched):
 
 
 def restore(root, manifest, partial=False, validate_only=False):
-    if set(manifest) != set(FILES):
+    names = FILES + ((PDF_FILE,) if PDF_FILE in manifest else ())
+    if set(manifest) != set(names):
         raise RuntimeError('Unexpected backup manifest files')
     originals = {}
-    for index, name in enumerate(FILES):
+    for index, name in enumerate(names):
         item = manifest[name]
         if item['backup'] != str(index):
             raise RuntimeError('Unexpected backup path')
@@ -213,10 +219,84 @@ def start(root):
     raise RuntimeError('New bot failed the PID/lock startup check')
 
 
+def check_upgrade(modules, owner):
+    try:
+        import pypdf
+        if pypdf.__version__ != '5.9.0':
+            raise RuntimeError('Install the compatible pypdf==5.9.0 dependency first')
+        with tempfile.TemporaryDirectory(prefix='private-demo-preflight-') as directory:
+            stage = Path(directory)
+            for name, data in modules.items():
+                ast.parse(data, feature_version=8)
+                compile(data, name, 'exec')
+                write(stage / Path(name).name, data)
+            helper = stage / Path(PDF_FILE).name
+            spec = importlib.util.spec_from_file_location('_private_demo_pdf_candidate', helper)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
+            spec.loader.exec_module(module)
+            check_module(stage / 'application_demo.py', owner)
+    except Exception:
+        raise RuntimeError('Upgrade preflight failed: check Python 3.8 compatibility, both modules, and pypdf==5.9.0') from None
+    finally:
+        sys.modules.pop('_private_demo_pdf_candidate', None)
+
+
+def upgrade(root, module_path, pdf_path):
+    if not module_path or not pdf_path or read(root / ACTIVE) is None:
+        raise RuntimeError('Upgrade requires an active demo and both module files')
+    manifest_path = root / BACKUP / 'manifest.json'
+    old_manifest = read(manifest_path)
+    manifest = json.loads(old_manifest)
+    restore(root, manifest, validate_only=True)
+    if PDF_FILE not in manifest and read(root / PDF_FILE) is not None:
+        raise RuntimeError('Unmanaged PDF helper exists; upgrade stopped')
+    modules = {FILES[3]: read(module_path), PDF_FILE: read(pdf_path)}
+    if any(data is None for data in modules.values()):
+        raise RuntimeError('Missing upgrade module file')
+    check_upgrade(modules, owner_id(root))
+    restore(root, manifest, validate_only=True)
+    if read(manifest_path) != old_manifest or read(root / ACTIVE) is None:
+        raise RuntimeError('Demo metadata changed during preflight; upgrade stopped')
+    if PDF_FILE not in manifest and read(root / PDF_FILE) is not None:
+        raise RuntimeError('Unmanaged PDF helper appeared during preflight')
+    previous = {name: read(root / name) for name in modules}
+    manifest.setdefault(PDF_FILE, {'original': None, 'installed': None, 'mode': 0o644, 'backup': '4'})
+    for name, data in modules.items():
+        manifest[name]['installed'] = digest(data)
+        if previous[name] is not None:
+            write(root / BACKUP / ('upgrade-previous-' + Path(name).name), previous[name])
+    new_manifest = json.dumps(manifest).encode()
+    write(root / BACKUP / 'upgrade-previous-manifest.json', old_manifest)
+    stop(root)
+    try:
+        for name, data in modules.items():
+            write(root / name, data, manifest[name]['mode'])
+        write(manifest_path, new_manifest)
+        return start(root)
+    except Exception:
+        if not lock_free(root):
+            raise RuntimeError('New process still holds the lock; upgrade backups and guard retained') from None
+        for name in modules:
+            if digest(read(root / name)) not in {digest(previous[name]), digest(modules[name])}:
+                raise RuntimeError('External edit during upgrade; recovery stopped: ' + name) from None
+        if read(manifest_path) not in (old_manifest, new_manifest):
+            raise RuntimeError('External manifest edit during upgrade; recovery stopped') from None
+        for name, data in previous.items():
+            if data is None:
+                (root / name).unlink(missing_ok=True)
+            else:
+                write(root / name, data, manifest[name]['mode'])
+        write(manifest_path, old_manifest)
+        start(root)
+        raise
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('install', 'rollback'))
+    parser.add_argument('action', choices=('install', 'upgrade', 'rollback'))
     parser.add_argument('--module-file', type=Path)
+    parser.add_argument('--pdf-module-file', type=Path)
     args = parser.parse_args()
     root = Path.cwd().resolve()
     if sys.version_info < (3, 8) or Path(sys.prefix).resolve() != (root / '.venv').resolve():
@@ -226,7 +306,9 @@ def main():
     sys.path.insert(0, str(root))  # The installer may be executed from /tmp.
     with (root / 'logs/bot-control.lock').open('a') as control:
         fcntl.flock(control, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        if args.action == 'rollback':
+        if args.action == 'upgrade':
+            pid = upgrade(root, args.module_file, args.pdf_module_file)
+        elif args.action == 'rollback':
             manifest = json.loads((root / BACKUP / 'manifest.json').read_text())
             restore(root, manifest, validate_only=True)
             stop(root)
@@ -235,8 +317,11 @@ def main():
         else:
             if not args.module_file or (root / BACKUP).exists() or (root / ACTIVE).exists():
                 raise RuntimeError('Module file required; existing demo backup/marker must be preserved')
-            check_module(args.module_file.resolve(), owner_id(root))
-            original, patched = prepare(root, args.module_file.resolve())
+            if args.pdf_module_file:
+                check_upgrade({FILES[3]: read(args.module_file), PDF_FILE: read(args.pdf_module_file)}, owner_id(root))
+            else:
+                check_module(args.module_file.resolve(), owner_id(root))
+            original, patched = prepare(root, args.module_file.resolve(), args.pdf_module_file)
             manifest = backup(root, original, patched)
             stopped = False
             try:

@@ -231,3 +231,14 @@ class DocumentTests(unittest.TestCase):
         self.assertLessEqual(len(profile["facts"]), 700)
         self.assertNotIn("PostgreSQL", profile["facts"])
         self.assertTrue(profile["truncated"])
+
+    def test_explicit_profession_outweighs_incidental_programming_skills(self):
+        cases = [
+            ("Продуктовый дизайнер. Figma, исследования. Знаком с React и Python.", "design"),
+            ("Product Designer. I prototype interfaces using React and Python.", "design"),
+            ("Frontend-разработчик. React, TypeScript. Пишу вспомогательные скрипты на Python.", "front"),
+            ("Python-разработчик. Создаю API, знаком с React и frontend инструментами.", "python"),
+        ]
+        for text, role in cases:
+            with self.subTest(role=role):
+                self.assertEqual(extract_profile(text)["role"], role)
