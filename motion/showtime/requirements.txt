@@ -1,0 +1,4 @@
+# Separate video environment; never install into the production bot environment.
+# Matches the pinned Showtime requirements. Use Python 3.12 for these wheels.
+numpy==2.0.2
+Pillow==11.3.0
