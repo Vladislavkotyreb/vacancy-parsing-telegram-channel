@@ -1,15 +1,17 @@
 import asyncio
 import io
 import json
+import resource
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, mock_open, patch
 
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from bot.application_demo import ApplicationDemo, PDF_LIMIT, extract_pdf
 from bot.application_demo_pdf import PAGE_LIMIT, TEXT_LIMIT
+from bot import application_demo_pdf as pdf_worker
 
 
 def pdf_bytes(text="", pages=1, password=None):
@@ -97,6 +99,39 @@ class PDFExtractionTests(unittest.IsolatedAsyncioTestCase):
             with patch("bot.application_demo.asyncio.create_subprocess_exec", new=AsyncMock(return_value=process)):
                 with self.assertRaisesRegex(ValueError, "Не удалось прочитать"):
                     await extract_pdf(b"%PDF-1.4")
+
+
+class PDFWorkerLimitsTests(unittest.TestCase):
+    def test_linux_memory_limit_adds_headroom_to_existing_virtual_memory(self):
+        baseline = 100000 * 4096
+        for hard, expected in ((resource.RLIM_INFINITY, baseline + 256 * 1024 * 1024), (baseline + 64 * 1024 * 1024, baseline + 64 * 1024 * 1024)):
+            def get_limit(kind):
+                return (resource.RLIM_INFINITY, hard if kind == resource.RLIMIT_AS else resource.RLIM_INFINITY)
+
+            with self.subTest(hard=hard), patch.object(pdf_worker.sys, "platform", "linux"), patch("builtins.open", mock_open(read_data="100000 5000 1 2 3 4 5\n")), patch.object(pdf_worker.os, "sysconf", return_value=4096), patch.object(resource, "getrlimit", side_effect=get_limit), patch.object(resource, "setrlimit") as set_limit:
+                pdf_worker.limit_resources()
+                set_limit.assert_any_call(resource.RLIMIT_AS, (expected, expected))
+                set_limit.assert_any_call(resource.RLIMIT_CPU, (5, 5))
+
+    def test_trusted_import_precedes_limits_and_pdf_input(self):
+        events = []
+        real_import = __import__
+
+        def importing(name, *args, **kwargs):
+            if name == "pypdf":
+                events.append("import")
+            return real_import(name, *args, **kwargs)
+
+        def read_input(size):
+            events.append("read")
+            return b"synthetic"
+
+        stdin = SimpleNamespace(buffer=SimpleNamespace(read=Mock(side_effect=read_input)))
+        stdout = SimpleNamespace(buffer=io.BytesIO())
+        with patch("builtins.__import__", side_effect=importing), patch.object(pdf_worker, "limit_resources", side_effect=lambda: events.append("limits")), patch.object(pdf_worker, "read_pdf", return_value={"text": "ok"}), patch.object(pdf_worker.sys, "stdin", stdin), patch.object(pdf_worker.sys, "stdout", stdout), patch.object(pdf_worker.logging, "disable"):
+            pdf_worker.main()
+        self.assertEqual(events, ["import", "limits", "read"])
+        self.assertEqual(json.loads(stdout.buffer.getvalue()), {"text": "ok"})
 
 
 class PDFTelegramFlowTests(unittest.IsolatedAsyncioTestCase):

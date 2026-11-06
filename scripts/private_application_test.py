@@ -219,6 +219,35 @@ def start(root):
     raise RuntimeError('New bot failed the PID/lock startup check')
 
 
+def pdf_probe():
+    text = 'Private demo PDF check'
+    content = ('BT /F1 12 Tf 72 720 Td (' + text + ') Tj ET').encode()
+    objects = [
+        b'<< /Type /Catalog /Pages 2 0 R >>',
+        b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+        b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        b'<< /Length ' + str(len(content)).encode() + b' >>\nstream\n' + content + b'\nendstream',
+    ]
+    data, offsets = b'%PDF-1.4\n', [0]
+    for number, value in enumerate(objects, 1):
+        offsets.append(len(data))
+        data += str(number).encode() + b' 0 obj\n' + value + b'\nendobj\n'
+    xref = len(data)
+    data += b'xref\n0 6\n0000000000 65535 f \n'
+    data += b''.join(('{:010d} 00000 n \n'.format(offset)).encode() for offset in offsets[1:])
+    data += b'trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n' + str(xref).encode() + b'\n%%EOF\n'
+    return data, text
+
+
+def check_pdf_worker(helper):
+    data, expected = pdf_probe()
+    result = subprocess.run([sys.executable, '-I', str(helper)], input=data,
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10)
+    if result.returncode != 0 or json.loads(result.stdout) != {'text': expected}:
+        raise RuntimeError('Isolated PDF worker failed the synthetic extraction check')
+
+
 def check_upgrade(modules, owner):
     try:
         import pypdf
@@ -236,8 +265,9 @@ def check_upgrade(modules, owner):
             sys.modules[spec.name] = module
             spec.loader.exec_module(module)
             check_module(stage / 'application_demo.py', owner)
+            check_pdf_worker(helper)
     except Exception:
-        raise RuntimeError('Upgrade preflight failed: check Python 3.8 compatibility, both modules, and pypdf==5.9.0') from None
+        raise RuntimeError('Upgrade preflight failed: check isolated PDF extraction, Python 3.8 compatibility, both modules, and pypdf==5.9.0') from None
     finally:
         sys.modules.pop('_private_demo_pdf_candidate', None)
 

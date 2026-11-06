@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
 import sys
 
 PDF_LIMIT = 2 * 1024 * 1024
@@ -40,7 +41,9 @@ def limit_resources():
 
     limits = [(resource.RLIMIT_CPU, 5), (resource.RLIMIT_CORE, 0), (resource.RLIMIT_FSIZE, 0)]
     if sys.platform.startswith("linux"):
-        limits.append((resource.RLIMIT_AS, 256 * 1024 * 1024))
+        with open("/proc/self/statm", "r") as status:
+            baseline = int(status.read(128).split()[0]) * os.sysconf("SC_PAGE_SIZE")
+        limits.append((resource.RLIMIT_AS, baseline + 256 * 1024 * 1024))
     for kind, value in limits:
         _, hard = resource.getrlimit(kind)
         maximum = value if hard == resource.RLIM_INFINITY else min(value, hard)
@@ -50,6 +53,9 @@ def limit_resources():
 def main():
     logging.disable(logging.CRITICAL)
     try:
+        # Load trusted shared libraries before limiting allocations for untrusted PDF data.
+        import pypdf  # noqa: F401
+
         limit_resources()
         result = read_pdf(sys.stdin.buffer.read(PDF_LIMIT + 1))
     except ImportError:

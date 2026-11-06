@@ -226,7 +226,7 @@ class PrivateApplicationInstallerTest(unittest.TestCase):
     def test_upgrade_preflight_stages_siblings_and_checks_exact_dependency(self):
         modules = {
             'bot/application_demo.py': b'from pathlib import Path\nfrom aiogram import Router\ndef create_demo_router(owner):\n    assert Path(__file__).with_name("application_demo_pdf.py").exists()\n    return Router()\n',
-            installer.PDF_FILE: b'def extract_pdf(data):\n    return "test"\n',
+            installer.PDF_FILE: b'import json\nif __name__ == "__main__":\n    print(json.dumps({"text": "Private demo PDF check"}))\n',
         }
         class FakeRouter:
             pass
@@ -234,6 +234,28 @@ class PrivateApplicationInstallerTest(unittest.TestCase):
             installer.check_upgrade(modules, 123)
         with mock.patch.dict('sys.modules', {'pypdf': SimpleNamespace(__version__='6.0.0')}), self.assertRaisesRegex(RuntimeError, 'pypdf==5.9.0'):
             installer.check_upgrade(modules, 123)
+
+    def test_worker_self_check_uses_isolation_timeout_and_pdf_input(self):
+        helper = self.root / 'worker.py'
+        with mock.patch.object(installer.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=b'{"text":"Private demo PDF check"}')) as run:
+            installer.check_pdf_worker(helper)
+        self.assertEqual(run.call_args.args[0], [installer.sys.executable, '-I', str(helper)])
+        self.assertEqual(run.call_args.kwargs['timeout'], 10)
+        self.assertTrue(run.call_args.kwargs['input'].startswith(b'%PDF-1.4'))
+        self.assertIn(b'xref\n0 6\n', run.call_args.kwargs['input'])
+
+    def test_worker_self_check_rejects_import_failure_despite_parent_dependency(self):
+        helper = self.root / 'worker.py'
+        helper.write_text('import json\nif __name__ == "__main__":\n    print(json.dumps({"error": "unavailable"}))\n')
+        with self.assertRaisesRegex(RuntimeError, 'synthetic extraction'):
+            installer.check_pdf_worker(helper)
+
+    def test_worker_self_check_rejects_blank_wrong_and_invalid_results(self):
+        for output in (b'{"error":"no_text"}', b'{"text":"wrong text"}', b'not json'):
+            with self.subTest(output=output), \
+                    mock.patch.object(installer.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=output)), \
+                    self.assertRaises((RuntimeError, ValueError)):
+                installer.check_pdf_worker(self.root / 'worker.py')
 
     def test_fresh_install_can_backup_and_restore_existing_pdf_helper(self):
         module, helper = self.upgrade_candidates()
