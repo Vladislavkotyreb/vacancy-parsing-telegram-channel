@@ -7,7 +7,8 @@ import aiohttp
 from bot.dates import parse_iso_datetime
 from bot.filters import is_product_designer_vacancy
 from bot.models import Vacancy
-from bot.skills_match import vacancy_skills
+from bot.skills_match import skill_requirements
+from bot.compatibility import vacancy_tasks, work_formats
 from bot.parsers.base import BaseParser
 
 BASE_URL = "https://getmatch.ru"
@@ -71,15 +72,19 @@ class GetMatchParser(BaseParser):
         path = offer.get("url", "")
         url = f"{BASE_URL}{path}" if path.startswith("/") else path
 
+        skills, bonus = skill_requirements(title, offer.get("stack"), offer.get("skills"), offer.get("description"))
         return Vacancy(
             source=self.source,
             external_id=external_id,
             title=title,
-            skills=vacancy_skills(title, offer.get("stack"), offer.get("skills"), offer.get("description")),
+            tasks=vacancy_tasks(offer.get("description")),
+            skills=skills,
+            bonus_skills=bonus,
             company=company,
             url=url,
             salary=salary,
             location=location,
+            work_format=", ".join(work_formats(location or "")) or None,
             published_at=published_at,
         )
 

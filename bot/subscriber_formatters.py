@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Union
 
 from bot.models import Vacancy
 from bot.skills_match import match_line
+from bot.compatibility import ResumeProfile, compatibility
 from bot.regions import CIS, DEFAULT_REGION, WORLD, normalize_region
 from bot.roles import get_role
 from bot.russian import plural_ru
@@ -57,7 +58,7 @@ def format_subscriber_header(
 
 
 def personal_pages(
-    header: str, vacancies: list[Vacancy], resume: Optional[list[str]]
+    header: str, vacancies: list[Vacancy], resume: Optional[Union[ResumeProfile, list[str]]]
 ) -> list[tuple[str, list[Vacancy]]]:
     """Текст и вакансии каждой страницы для отметки после успешной отправки."""
     pages = []
@@ -67,7 +68,10 @@ def personal_pages(
     upper = len(vacancies) + 1
     continuation = format_continuation_header(upper, upper)
     for vacancy in vacancies:
-        metric = "\n" + match_line(vacancy, resume) if resume is not None else ""
+        metric = ""
+        if resume is not None:
+            report = compatibility(vacancy, resume) if isinstance(resume, ResumeProfile) else match_line(vacancy, resume)
+            metric = "\n" + escape_html(report)
         block = format_vacancy(vacancy) + metric
         if len(continuation + SEPARATOR + block) > TELEGRAM_MAX_LENGTH:
             block = escape_html(vacancy.title[:160]) + metric

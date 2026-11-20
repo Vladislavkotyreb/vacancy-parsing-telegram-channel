@@ -54,18 +54,34 @@ def extract_skills(text: str) -> list[str]:
     return sorted({_NAMES[int(match.lastgroup[1:])] for match in _PATTERN.finditer(text)})
 
 
-def _source_text(value: Any) -> str:
+def source_text(value: Any) -> str:
     if isinstance(value, list):
-        return " ".join(_source_text(item) for item in value)
+        return " ".join(source_text(item) for item in value)
     if isinstance(value, dict):
-        return _source_text(value.get("title") or value.get("name") or value.get("value"))
+        return source_text(value.get("title") or value.get("name") or value.get("value"))
     if isinstance(value, str):
         return html.unescape(re.sub("<[^>]+>", " ", value))
     return ""
 
 
-def vacancy_skills(*fields: Any) -> list[str]:
-    return extract_skills(" ".join(_source_text(field) for field in fields))
+_BONUS = re.compile(r"будет плюсом|будет преимуществом|желательно|nice[- ]to[- ]have|is a plus|preferred", re.I)
+_NOT_REQUIRED = re.compile(r"не требу(?:ется|ются)|not required", re.I)
+
+
+def requirement_clauses(*fields: Any):
+    for value in fields:
+        # Точка внутри Node.js или .NET не разделяет требования.
+        for clause in re.split(r"[;\n]|[.!?](?=\s|$)", source_text(value)):
+            if clause.strip() and not _NOT_REQUIRED.search(clause):
+                yield clause, bool(_BONUS.search(clause))
+
+
+def skill_requirements(*fields: Any) -> tuple[list[str], list[str]]:
+    required, bonus = set(), set()
+    for clause, optional in requirement_clauses(*fields):
+        target = bonus if optional else required
+        target.update(extract_skills(clause))
+    return sorted(required), sorted(bonus - required)
 
 
 def match_line(vacancy: Vacancy, resume: Optional[Iterable[str]]) -> str:

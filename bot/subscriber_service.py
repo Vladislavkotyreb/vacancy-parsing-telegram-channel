@@ -29,6 +29,7 @@ from bot.cross_source import dedupe_across_sources
 from bot.dates import ensure_aware, is_fresh
 from bot.regions import for_region
 from bot.digest_more import more_keyboard
+from bot.resume import load_match_profile
 from bot.models import Vacancy
 from bot.roles import get_role
 from bot.russian import format_digest_roles_label
@@ -482,7 +483,7 @@ class SubscriberService:
         vacancies, fresh = self._merge_for_roles(cache, role_ids, region)
         if not dedupe_across_sources(self.db.unsent_to_subscriber(user_id, fresh)):
             # Участник может проверить резюме, даже если утренние вакансии уже доставлены.
-            resume = self.db.resume_skills(user_id)
+            resume = await load_match_profile(self.db, self.bot, user_id)
             if fresh and resume:
                 sample = dedupe_across_sources(fresh)[:3]
                 header = "Проверка резюме по ранее полученным вакансиям"
@@ -557,7 +558,7 @@ class SubscriberService:
             role_label, len(to_post), total_found, self.settings.max_vacancy_age_hours,
             total_new=len(all_new), region=region,
         )
-        messages = personal_pages(header, to_post, self.db.resume_skills(user_id))
+        messages = personal_pages(header, to_post, await load_match_profile(self.db, self.bot, user_id))
         for index, (message, vacancies) in enumerate(messages):
             is_last = index == len(messages) - 1
             markup = more if is_last else None

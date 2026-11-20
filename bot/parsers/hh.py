@@ -19,7 +19,8 @@ from bot.dates import parse_iso_datetime
 from bot.filters import is_product_designer_vacancy
 from bot.grades import resolve_grade
 from bot.models import Vacancy
-from bot.skills_match import vacancy_skills
+from bot.skills_match import skill_requirements
+from bot.compatibility import vacancy_tasks
 from bot.parsers.base import BaseParser
 
 logger = logging.getLogger(__name__)
@@ -381,6 +382,12 @@ class HHParser(BaseParser):
         if schedule.get("id") == "remote":
             work_format = "Удалённо"
 
+        formats = {"REMOTE": "Удалённо", "HYBRID": "Гибрид", "ON_SITE": "Офис"}
+        offered = [formats[f["id"]] for f in item.get("work_format") or []
+                   if isinstance(f, dict) and f.get("id") in formats]
+        if offered:
+            work_format = ", ".join(offered)
+
         published_at = None
         if published := item.get("published_at"):
             published_at = parse_iso_datetime(published)
@@ -390,12 +397,17 @@ class HHParser(BaseParser):
         hh_experience_id = experience.get("id")
 
         snippet = item.get("snippet") or {}
+        skills, bonus = skill_requirements(
+            title, snippet.get("requirement"), snippet.get("responsibility"), item.get("key_skills")
+        )
         return Vacancy(
             source=self.source,
             external_id=external_id,
             title=title,
-            skills=vacancy_skills(title, snippet.get("requirement"), snippet.get("responsibility"),
-                                  item.get("key_skills")),
+            min_years={"between1And3": 1, "between3And6": 3, "moreThan6": 6}.get(hh_experience_id),
+            tasks=vacancy_tasks(snippet.get("requirement"), snippet.get("responsibility")),
+            skills=skills,
+            bonus_skills=bonus,
             company=employer.get("name", "—"),
             url=item.get("alternate_url", ""),
             salary=salary,

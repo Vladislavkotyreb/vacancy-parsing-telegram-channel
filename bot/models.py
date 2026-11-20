@@ -19,6 +19,10 @@ class Vacancy:
     grade: Optional[str] = None
     skills: list[str] = field(default_factory=list)
 
+    bonus_skills: list[str] = field(default_factory=list)
+    tasks: list[str] = field(default_factory=list)
+    min_years: Optional[int] = None
+
     @property
     def uid(self) -> str:
         return f"{self.source}:{self.external_id}"

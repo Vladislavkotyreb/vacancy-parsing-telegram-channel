@@ -30,7 +30,8 @@ import aiohttp
 from bot.dates import ensure_aware, parse_iso_datetime, utc_now
 from bot.grades import extract_grade
 from bot.models import Vacancy
-from bot.skills_match import vacancy_skills
+from bot.skills_match import skill_requirements
+from bot.compatibility import vacancy_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -94,11 +95,14 @@ def _vacancy(source: str, external_id: str, title: str, company: str, url: str,
              description: Optional[str] = None) -> Optional[Vacancy]:
     if not title or not external_id or not url or _restricted_or_gig(title):
         return None
+    skills, bonus = skill_requirements(title, description)
     return Vacancy(
         source=source,
         external_id=external_id,
         title=title,
-        skills=vacancy_skills(title, description),
+        tasks=vacancy_tasks(description),
+        skills=skills,
+        bonus_skills=bonus,
         company=company or "—",
         url=url,
         salary=salary,

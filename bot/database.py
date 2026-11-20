@@ -76,13 +76,15 @@ class VacancyDatabase:
             return conn.execute("SELECT 1 FROM resume_testers WHERE user_id = ?", (user_id,)).fetchone() is not None
 
     def save_resume(self, user_id: int, skills: list[str], *, file_name: Optional[str] = None,
-                    file_id: Optional[str] = None, username: Optional[str] = None) -> None:
+                    file_id: Optional[str] = None, username: Optional[str] = None,
+                    profile: Optional[dict] = None) -> None:
         with self._connect() as conn:
             conn.execute(
                 """INSERT OR REPLACE INTO resume_profiles
-                   (user_id, resume_id, skills_json, file_name, file_id, username)
-                   VALUES (?, lower(hex(randomblob(16))), ?, ?, ?, ?)""",
-                (user_id, json.dumps(skills, ensure_ascii=False), file_name, file_id, username),
+                   (user_id, resume_id, skills_json, file_name, file_id, username, profile_json)
+                   VALUES (?, lower(hex(randomblob(16))), ?, ?, ?, ?, ?)""",
+                (user_id, json.dumps(skills, ensure_ascii=False), file_name, file_id, username,
+                 json.dumps(profile, ensure_ascii=False) if profile is not None else None),
             )
 
     def get_resume(self, user_id: int) -> Optional[dict]:
@@ -92,7 +94,16 @@ class VacancyDatabase:
             return None
         resume = dict(row)
         resume["skills"] = json.loads(resume.pop("skills_json"))
+        profile_json = resume.pop("profile_json")
+        resume["profile"] = json.loads(profile_json) if profile_json else None
         return resume
+
+    def upgrade_resume(self, user_id: int, resume_id: str, profile: dict) -> None:
+        with self._connect() as conn:
+            conn.execute("UPDATE resume_profiles SET profile_json = ?, skills_json = ? "
+                         "WHERE user_id = ? AND resume_id = ? AND profile_json IS NULL",
+                         (json.dumps(profile, ensure_ascii=False), json.dumps(profile["skills"]),
+                          user_id, resume_id))
 
     def resume_skills(self, user_id: int) -> Optional[list[str]]:
         with self._connect() as conn:
@@ -138,6 +149,7 @@ class VacancyDatabase:
                     user_id INTEGER PRIMARY KEY,
                     skills_json TEXT NOT NULL,
                     resume_id TEXT,
+                    profile_json TEXT,
                     file_name TEXT,
                     file_id TEXT,
                     username TEXT
@@ -234,7 +246,7 @@ class VacancyDatabase:
             # Чат и рассылка могут запуститься одновременно после обновления.
             conn.execute("BEGIN IMMEDIATE")
             resume_columns = {r["name"] for r in conn.execute("PRAGMA table_info(resume_profiles)")}
-            for column in ("resume_id", "file_name", "file_id", "username"):
+            for column in ("resume_id", "file_name", "file_id", "username", "profile_json"):
                 if column not in resume_columns:
                     conn.execute(f"ALTER TABLE resume_profiles ADD COLUMN {column} TEXT")
             conn.execute("UPDATE resume_profiles SET resume_id = lower(hex(randomblob(16))) "

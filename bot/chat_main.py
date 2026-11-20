@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from dataclasses import asdict
 from io import BytesIO
 import logging
 import os
@@ -35,7 +36,7 @@ try:
 except ImportError:
     from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
 
-from bot.resume import MAX_FILE_BYTES, parse_resume
+from bot.resume import MAX_FILE_BYTES, parse_resume_profile
 from bot.config import Settings
 from bot.runtime import limit_threads
 from bot.database import VacancyDatabase
@@ -516,7 +517,7 @@ async def unsub_no(callback: CallbackQuery, db: VacancyDatabase) -> None:
 
 RESUME_UPLOAD_TEXT = (
     "Нажми на скрепку и прикрепи резюме в PDF до 2 МБ. "
-    "Прочитаю текст первых 20 страниц и сравню навыки с вакансиями."
+    "Прочитаю текст первых 20 страниц и сравню профессиональный опыт с требованиями вакансий."
 )
 
 
@@ -539,10 +540,21 @@ async def cmd_resume(message: Message, db: VacancyDatabase) -> None:
         InlineKeyboardButton(text="Удалить", callback_data="cv:delete:" + resume["resume_id"]),
         InlineKeyboardButton(text="Залить другое", callback_data="cv:replace:" + resume["resume_id"]),
     ]])
-    caption = (resume["file_name"] or "Моё резюме") + "\n\nНавыки: " + ", ".join(resume["skills"])
+    lines = [resume["file_name"] or "Моё резюме"]
+    facts = resume["profile"] or {}
+    roles = [ROLES[r].button_label for r in facts.get("roles", []) if r in ROLES]
+    if roles:
+        lines.append("Роли: " + ", ".join(roles))
+    if facts.get("years") is not None:
+        lines.append(f"Общий стаж: {facts['years']} г.")
+    if facts.get("tasks"):
+        lines.append("Практика: " + ", ".join(facts["tasks"]))
+    if resume["skills"]:
+        lines.append("Навыки: " + ", ".join(resume["skills"]))
+    caption = "\n".join(lines)
     if resume["file_id"]:
         try:
-            await message.answer_document(resume["file_id"], caption=caption, reply_markup=actions)
+            await message.answer_document(resume["file_id"], caption=caption[:1024], reply_markup=actions)
             return
         except TelegramBadRequest:
             # Telegram может больше не выдавать документ по сохранённому file_id.
@@ -601,16 +613,15 @@ async def _save_document(message: Message, db: VacancyDatabase, bot: Bot) -> Non
         await message.answer("Не удалось скачать резюме. Пришли файл ещё раз.")
         return
     try:
-        skills = await asyncio.get_running_loop().run_in_executor(
-            None, parse_resume, doc.file_name, buffer.getvalue()
+        profile = await asyncio.get_running_loop().run_in_executor(
+            None, parse_resume_profile, doc.file_name, buffer.getvalue()
         )
     except ValueError as exc:
         await message.answer(str(exc))
         return
-    db.save_resume(message.chat.id, skills, file_name=doc.file_name, file_id=doc.file_id,
+    db.save_resume(message.chat.id, profile.skills, profile=asdict(profile), file_name=doc.file_name, file_id=doc.file_id,
                    username=message.from_user.username if message.from_user else None)
-    await message.answer("Резюме принято. Навыки: " + ", ".join(skills)
-                         + ".\nОткрыть файл можно кнопкой «Мои резюме».",
+    await message.answer("Резюме сохранено. Нажми «🔎 Вакансии сейчас», чтобы сравнить его с вакансиями.",
                          reply_markup=reply_keyboard(True))
 
 
