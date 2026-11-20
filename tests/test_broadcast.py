@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from aiogram.exceptions import TelegramForbiddenError
 
-from bot.broadcast import load_broadcast, run_broadcast, send_preview
+from bot.broadcast import (
+    RESUME_ANNOUNCEMENT_AT, RESUME_BOT_ID, load_broadcast, run_broadcast,
+    scheduled_resume_announcement, send_preview,
+)
 from bot.database import VacancyDatabase
 
 BROADCAST = "2026-10-new-roles"
@@ -31,6 +35,38 @@ class BroadcastTest(unittest.IsolatedAsyncioTestCase):
     def test_audience_excludes_unsubscribed(self):
         self.assertEqual(self.db.broadcast_audience(), [1, 2])
         self.assertEqual(self.db.broadcast_audience(include_starters=True), [1, 2, 4])
+
+    async def test_resume_announcement_waits_then_delivers_video_to_subscribers_once(self):
+        self.bot.id = RESUME_BOT_ID
+        due = RESUME_ANNOUNCEMENT_AT
+        before = due - timedelta(hours=2)
+        with patch("bot.broadcast.datetime") as clock, patch("bot.broadcast.asyncio.sleep") as sleep:
+            clock.now.side_effect = [before, before, due]
+            await scheduled_resume_announcement(self.bot, self.db)
+            self.assertEqual(sleep.await_args_list[0].args, (7200,))
+            clock.now.side_effect = None
+            clock.now.return_value = due
+            await scheduled_resume_announcement(self.bot, self.db)
+        deliveries = [call.kwargs for call in self.bot.send_animation.await_args_list]
+        self.assertEqual([message["chat_id"] for message in deliveries], [1, 2])
+        self.assertIn("Добавить резюме", deliveries[0]["caption"])
+        self.assertEqual((deliveries[0]["width"], deliveries[0]["height"]), (1080, 1350))
+        self.bot.send_message.assert_not_awaited()
+
+    async def test_resume_announcement_skips_other_bots_and_expired_slot(self):
+        due = RESUME_ANNOUNCEMENT_AT
+        with patch("bot.broadcast.datetime") as clock, patch("bot.broadcast.asyncio.sleep") as sleep:
+            clock.now.return_value = due
+            self.bot.id = 42
+            await scheduled_resume_announcement(self.bot, self.db)
+            self.bot.id = RESUME_BOT_ID
+            clock.now.return_value = due + timedelta(minutes=1)
+            await scheduled_resume_announcement(self.bot, self.db)
+            before = due - timedelta(seconds=1)
+            clock.now.side_effect = [before, before, due + timedelta(hours=1)]
+            await scheduled_resume_announcement(self.bot, self.db)
+            sleep.assert_awaited_once_with(1)
+        self.bot.send_animation.assert_not_awaited()
 
     async def test_sends_to_everyone_once(self):
         stats = await run_broadcast(self.bot, self.db, BROADCAST, "текст", [1, 2])

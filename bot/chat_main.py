@@ -35,6 +35,7 @@ try:
 except ImportError:
     from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
 
+from bot.broadcast import scheduled_resume_announcement
 from bot.resume import MAX_FILE_BYTES, parse_resume_profile
 from bot.config import Settings
 from bot.runtime import limit_threads
@@ -1058,10 +1059,13 @@ async def main() -> None:
     dp.include_router(router)
 
     logger.info("Чат-бот подписок запущен (polling)")
+    announcement = asyncio.create_task(scheduled_resume_announcement(bot, db))
     try:
         await _wait_for_telegram(bot, admin_id=settings.telegram_admin_id)
         await dp.start_polling(bot)
     finally:
+        announcement.cancel()
+        await asyncio.gather(announcement, return_exceptions=True)
         _release_single_instance()
         await bot.session.close()
 

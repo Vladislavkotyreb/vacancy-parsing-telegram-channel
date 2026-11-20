@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import html
 import re
@@ -36,6 +37,11 @@ CAPTION_LIMIT = 1024
 # людей (отписки), а в 10:00–10:30 идут утренний сбор и подборка.
 SAFE_FROM = (12, 0)
 SAFE_TO = (20, 0)
+
+# Единственный согласованный утренний анонс для @productdesignervacparser228bot.
+RESUME_BOT_ID = 8859745184
+RESUME_ANNOUNCEMENT_AT = datetime(2026, 11, 21, 10, tzinfo=timezone(timedelta(hours=3)))
+RESUME_ANNOUNCEMENT = Path(__file__).resolve().parent.parent / "broadcasts" / "2026-11-21-resume-match.html"
 
 
 def is_safe_time(hour: int, minute: int) -> bool:
@@ -183,3 +189,28 @@ async def run_broadcast(
 
     logger.info("Рассылка %s: %s", broadcast_id, stats)
     return stats
+
+
+async def scheduled_resume_announcement(bot: Bot, db: VacancyDatabase) -> None:
+    if bot.id != RESUME_BOT_ID:
+        return
+    due = RESUME_ANNOUNCEMENT_AT
+    # После этой минуты запуск бота уже не должен инициировать массовую рассылку.
+    expires = due + timedelta(minutes=1)
+    try:
+        now = datetime.now(due.tzinfo)
+        if now >= expires:
+            return
+        broadcast_id, caption = load_broadcast(RESUME_ANNOUNCEMENT)
+        video = find_video(RESUME_ANNOUNCEMENT, caption)
+        if video is None:
+            raise FileNotFoundError(RESUME_ANNOUNCEMENT.with_suffix(".mp4"))
+        logger.info("Рассылка %s запланирована на %s МСК", broadcast_id, due.strftime("%d.%m.%Y %H:%M"))
+        now = datetime.now(due.tzinfo)
+        while now < due:
+            await asyncio.sleep((due - now).total_seconds())
+            now = datetime.now(due.tzinfo)
+        if now < expires:
+            await run_broadcast(bot, db, broadcast_id, caption, db.broadcast_audience(), video)
+    except Exception:
+        logger.exception("Сбой запланированной рассылки %s", RESUME_ANNOUNCEMENT.stem)
