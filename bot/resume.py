@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 from bot.skills_match import extract_skills
@@ -20,18 +21,20 @@ def parse_resume(filename: str, data: bytes) -> list[str]:
     elif ext == ".pdf":
         try:
             proc = subprocess.run(
-                ["pdftotext", "-f", "1", "-l", "20", "-enc", "UTF-8", "-", "-"],
+                [sys.executable, "-m", "bot.pdf_text"],
                 input=data, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=8,
             )
-        except FileNotFoundError:
-            raise ValueError("Чтение PDF сейчас недоступно. Пришли резюме в TXT.")
         except subprocess.TimeoutExpired:
-            raise ValueError("Не удалось обработать PDF. Пришли текстовую версию.")
+            raise ValueError("Обработка PDF заняла слишком много времени. Попробуй меньший PDF.")
+        if proc.returncode == 3:
+            raise ValueError("Не удалось запустить чтение PDF на сервере. Попробуй позже.")
         if proc.returncode:
-            raise ValueError("Не удалось прочитать PDF. Пришли PDF с текстом или TXT.")
-        text = proc.stdout.decode("utf-8", errors="replace")
+            raise ValueError("Не удалось открыть PDF. Проверь, что файл открывается без пароля.")
+        text = proc.stdout.decode("utf-8")
+        if not text.strip():
+            raise ValueError("В PDF нет доступного текста. Экспортируй резюме в PDF с выделяемым текстом.")
     else:
-        raise ValueError("Пришли резюме как документ TXT или PDF с текстом.")
+        raise ValueError("Прикрепи резюме в PDF с выделяемым текстом.")
     skills = extract_skills(text)
     if not skills:
         raise ValueError("Не нашёл знакомых навыков. Проверь, что навыки указаны текстом.")

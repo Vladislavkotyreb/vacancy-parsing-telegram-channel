@@ -515,8 +515,8 @@ async def unsub_no(callback: CallbackQuery, db: VacancyDatabase) -> None:
 
 
 RESUME_UPLOAD_TEXT = (
-    "Нажми на скрепку и пришли резюме как файл TXT (UTF-8) или PDF с текстом до 2 МБ. "
-    "В PDF прочитаю первые 20 страниц. По найденным навыкам посчитаю совпадение с вакансиями."
+    "Нажми на скрепку и прикрепи резюме в PDF до 2 МБ. "
+    "Прочитаю текст первых 20 страниц и сравню навыки с вакансиями."
 )
 
 
@@ -586,7 +586,7 @@ async def upload_resume(message: Message, db: VacancyDatabase, bot: Bot) -> None
     doc = message.document
     name = doc.file_name or ""
     if Path(name).suffix.lower() not in {".txt", ".pdf"} or (doc.file_size or 0) > MAX_FILE_BYTES:
-        await message.answer("Пришли резюме в TXT или PDF с текстом, до 2 МБ.")
+        await message.answer("Прикрепи резюме в PDF до 2 МБ.")
         return
     async with user_lock(message.chat.id):
         await _save_document(message, db, bot)

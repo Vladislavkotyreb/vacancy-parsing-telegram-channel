@@ -144,3 +144,14 @@ def test_resume_management_buttons(tmp_path):
         assert "Добавить резюме" in str(msg.answer.await_args.kwargs["reply_markup"])
 
     asyncio.run(scenario())
+
+
+def test_pdf_resume_on_host_without_system_utilities(monkeypatch):
+    monkeypatch.setenv("PATH", "")
+    pdf_file = Path(__file__).parent / "fixtures" / "designer-resume.pdf"
+    assert parse_resume("resume.PDF", pdf_file.read_bytes()) == ["Figma", "SQL", "Прототипирование"]
+
+
+def test_unreadable_pdf():
+    with pytest.raises(ValueError, match="открыть PDF"):
+        parse_resume("broken.pdf", b"invalid")
