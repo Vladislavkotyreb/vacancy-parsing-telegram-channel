@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from html import escape
+
 from bot.grades import extract_grade
 from bot.models import Vacancy
 
@@ -24,7 +26,7 @@ SEPARATOR = "\n\n" + "—" * 16 + "\n\n"
 CHANNEL_FOOTER = "\n\n" + "—" * 9 + "\n" + '<a href="https://t.me/prdsvac">Product design vacancies daily</a>'
 
 
-def format_vacancy(vacancy: Vacancy) -> str:
+def format_vacancy(vacancy: Vacancy, *, personal: bool = False) -> str:
     source = SOURCE_LABELS.get(vacancy.source) or EXTRA_SOURCE_LABELS.get(vacancy.source, vacancy.source)
     lines = [
         f"🎨 <b>{escape_html(vacancy.title)}</b>",
@@ -44,8 +46,18 @@ def format_vacancy(vacancy: Vacancy) -> str:
     if location:
         lines.append(f"📍 {escape_html(location)}")
 
-    lines.append(f"🔗 {source}")
-    lines.append(f'<a href="{escape_html(vacancy.url)}">Открыть вакансию</a>')
+    lines.append(f"🔗 {escape_html(source)}")
+    if personal and vacancy.summary:
+        lines.append(f"\n<b>Главное</b>\n{escape_html(vacancy.summary)}\n")
+    lines.append(f'<a href="{escape(vacancy.url)}">Открыть вакансию</a>')
+    if personal and vacancy.application_contact:
+        contact = vacancy.application_contact
+        label = escape_html(contact)
+        if contact.startswith("@"):
+            label = f'<a href="https://t.me/{escape(contact[1:])}">{label}</a>'
+        elif "@" in contact:
+            label = f'<a href="mailto:{escape(contact)}">{label}</a>'
+        lines.append(f"Контакт для отклика — {label}")
 
     return "\n".join(lines)
 

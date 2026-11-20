@@ -12,7 +12,7 @@ from bot.config import Settings
 from bot.cross_source import dedupe_across_sources
 from bot.models import Vacancy
 from bot.parsers import habr_career, world_remote
-from bot.parsers.geekjob import GeekJobParser
+from bot.parsers.geekjob import GeekJobParser, fill_recent_details
 from bot.parsers.getmatch import GetMatchParser
 from bot.parsers.hh import HHParser
 from bot.roles import Role
@@ -70,7 +70,7 @@ async def collect_for_role(settings: Settings, role: Role) -> list[Vacancy]:
     for source, vacancies in [
         ("hh.ru", hh_vacancies),
         ("career.habr.com", await _shared_feed("career.habr.com", lambda: _fetch_habr(hours))),
-        ("geekjob.ru", await _shared_feed("geekjob.ru", _fetch_geekjob)),
+        ("geekjob.ru", await _shared_feed("geekjob.ru", lambda: _fetch_geekjob(hours))),
         ("getmatch.ru", await _shared_feed("getmatch.ru", _fetch_getmatch)),
         # Удалёнка по миру: собирается для всех, а кому она идёт, решает регион
         # подписчика (bot/regions.py) уже при раздаче.
@@ -224,7 +224,7 @@ async def _fetch_hh(settings: Settings, role: Role) -> tuple[list[Vacancy], str]
     return list(merged.values()), reason
 
 
-async def _fetch_geekjob() -> list[Vacancy]:
+async def _fetch_geekjob(max_age_hours: int = 72) -> list[Vacancy]:
     """Весь каталог GeekJob: около 270 вакансий на 3 страницах, от новых к старым.
 
     Поиск не используем: `search` сайт игнорирует, а `qs` сортирует по
@@ -255,4 +255,5 @@ async def _fetch_geekjob() -> list[Vacancy]:
                 break
             page = int(next_page)
 
+        await fill_recent_details(session, list(results.values()), max_age_hours)
     return list(results.values())

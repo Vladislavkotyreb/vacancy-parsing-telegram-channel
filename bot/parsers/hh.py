@@ -20,6 +20,7 @@ from bot.filters import is_product_designer_vacancy
 from bot.grades import resolve_grade
 from bot.models import Vacancy
 from bot.skills_match import skill_requirements
+from bot.vacancy_details import vacancy_details
 from bot.compatibility import vacancy_tasks
 from bot.parsers.base import BaseParser
 
@@ -397,6 +398,10 @@ class HHParser(BaseParser):
         hh_experience_id = experience.get("id")
 
         snippet = item.get("snippet") or {}
+        summary, contact = vacancy_details(
+            snippet.get("responsibility"), snippet.get("requirement"), item.get("description"),
+            contacts=item.get("contacts"), tags=item.get("key_skills"),
+        )
         skills, bonus = skill_requirements(
             title, snippet.get("requirement"), snippet.get("responsibility"), item.get("key_skills")
         )
@@ -405,6 +410,7 @@ class HHParser(BaseParser):
             external_id=external_id,
             title=title,
             min_years={"between1And3": 1, "between3And6": 3, "moreThan6": 6}.get(hh_experience_id),
+            summary=summary, application_contact=contact,
             tasks=vacancy_tasks(snippet.get("requirement"), snippet.get("responsibility")),
             skills=skills,
             bonus_skills=bonus,

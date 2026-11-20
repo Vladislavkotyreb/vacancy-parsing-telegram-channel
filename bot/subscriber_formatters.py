@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from hashlib import sha256
+from html import escape
 from typing import Optional, Union
 
 from bot.models import Vacancy
@@ -80,10 +81,10 @@ def personal_pages(
                     seed = f"{user_id}:{vacancy.uid}".encode("utf-8")
                     stars = 1 + int.from_bytes(sha256(seed).digest()[:8], "big") % 100
                     metric += f"\n✦ Натальная карта — {stars}%"
-        block = format_vacancy(vacancy) + metric
+        block = format_vacancy(vacancy, personal=True) + metric
         if len(continuation + SEPARATOR + block) > TELEGRAM_MAX_LENGTH:
             block = escape_html(vacancy.title[:160]) + metric
-            link = f'\n<a href="{escape_html(vacancy.url)}">Открыть вакансию</a>'
+            link = f'\n<a href="{escape(vacancy.url)}">Открыть вакансию</a>'
             if len(continuation + SEPARATOR + block + link) <= TELEGRAM_MAX_LENGTH:
                 block += link
         prefix = continuation + SEPARATOR if pages else ""

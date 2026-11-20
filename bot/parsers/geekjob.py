@@ -1,18 +1,48 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Optional
 
 import aiohttp
+from bs4 import BeautifulSoup, SoupStrainer
 
-from bot.dates import parse_russian_date
+from bot.dates import is_fresh, parse_russian_date
 from bot.filters import is_product_designer_vacancy
 from bot.models import Vacancy
 from bot.skills_match import skill_requirements
+from bot.vacancy_details import vacancy_details
 from bot.compatibility import vacancy_tasks
 from bot.parsers.base import BaseParser
 
 BASE_URL = "https://geekjob.ru"
 API_URL = f"{BASE_URL}/json/find/vacancy"
+
+
+async def fill_recent_details(session, vacancies: list[Vacancy], max_age_hours: int) -> None:
+    # Каталог отсортирован от новых к старым. Дополнительные страницы не должны
+    # занять весь минутный лимит ручного поиска, если площадка медленно отвечает.
+    pending = [v for v in vacancies if not v.summary and is_fresh(v, max_age_hours)][:12]
+    slots = asyncio.Semaphore(3)
+
+    async def fill(vacancy: Vacancy) -> None:
+        async with slots:
+            try:
+                async with session.get(vacancy.url) as resp:
+                    if resp.status != 200:
+                        return
+                    body = await resp.text()
+            except (aiohttp.ClientError, asyncio.TimeoutError, UnicodeError):
+                return
+            section = BeautifulSoup(body, "lxml", parse_only=SoupStrainer(id="vacancy-description"))
+            if section.find(id="vacancy-description"):
+                summary, contact = vacancy_details(str(section))
+                vacancy.summary = summary
+                vacancy.application_contact = vacancy.application_contact or contact
+
+    try:
+        await asyncio.wait_for(asyncio.gather(*(fill(v) for v in pending)), timeout=6)
+    except asyncio.TimeoutError:
+        pass  # Уже заполненные карточки и базовые данные остальных пригодны для рассылки.
 
 
 class GeekJobParser(BaseParser):
@@ -82,11 +112,14 @@ class GeekJobParser(BaseParser):
             published_at = parse_russian_date(str(modify))
 
         skills, bonus = skill_requirements(title, item.get("skills"), item.get("tags"), item.get("description"))
+        summary, contact = vacancy_details(item.get("description"), contacts=item.get("contacts"),
+                                          tags=item.get("skills") or item.get("tags"))
         return Vacancy(
             source=self.source,
             external_id=external_id,
             title=title,
             tasks=vacancy_tasks(item.get("description")),
+            summary=summary, application_contact=contact,
             skills=skills,
             bonus_skills=bonus,
             company=company,
