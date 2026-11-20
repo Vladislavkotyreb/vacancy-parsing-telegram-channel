@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 from dataclasses import asdict
 from io import BytesIO
 import logging
@@ -418,7 +417,7 @@ async def _show_vacancy_step(
 
 
 def main_keyboard(message: Message, db: VacancyDatabase):
-    if message.chat.type == "private" and db.resume_test_enabled(message.chat.id):
+    if message.chat.type == "private":
         return reply_keyboard(has_resume=db.get_resume(message.chat.id) is not None)
     return reply_keyboard()
 
@@ -521,16 +520,8 @@ RESUME_UPLOAD_TEXT = (
 )
 
 
-# Ссылка выдаётся участнику лично. На сервере проверяем ссылку вместе с ID чата.
-RESUME_INVITE_HASH = "b848edcce5bb1f33e4e24014b4d38bc36c18dc3bcc663338c9dbbe0ccc64c57c"
-
-
-async def resume_participant(message: Message, db: VacancyDatabase) -> bool:
-    return db.resume_test_enabled(message.chat.id)
-
-
-@router.message(F.chat.type == "private", Command("resume"), resume_participant)
-@router.message(F.chat.type == "private", F.text.in_({BTN_ADD_RESUME, BTN_MY_RESUMES}), resume_participant)
+@router.message(F.chat.type == "private", Command("resume"))
+@router.message(F.chat.type == "private", F.text.in_({BTN_ADD_RESUME, BTN_MY_RESUMES}))
 async def cmd_resume(message: Message, db: VacancyDatabase) -> None:
     resume = db.get_resume(message.chat.id)
     if resume is None:
@@ -565,7 +556,7 @@ async def cmd_resume(message: Message, db: VacancyDatabase) -> None:
 @router.callback_query(F.message.chat.type == "private", F.data.startswith("cv:"))
 async def resume_action(callback: CallbackQuery, db: VacancyDatabase) -> None:
     user_id = callback.from_user.id
-    if callback.message.chat.id != user_id or not db.resume_test_enabled(user_id):
+    if callback.message.chat.id != user_id:
         await _answer(callback, "Открой резюме в личном чате с ботом.")
         return
     action, _, resume_id = callback.data[3:].partition(":")
@@ -586,14 +577,14 @@ async def resume_action(callback: CallbackQuery, db: VacancyDatabase) -> None:
     await _answer(callback, "Карточка устарела. Открой /resume.", show_alert=True)
 
 
-@router.message(F.chat.type == "private", Command("delete_resume"), resume_participant)
+@router.message(F.chat.type == "private", Command("delete_resume"))
 async def cmd_delete_resume(message: Message, db: VacancyDatabase) -> None:
     async with user_lock(message.chat.id):
         db.delete_resume(message.chat.id)
         await message.answer("Резюме удалено.", reply_markup=reply_keyboard(False))
 
 
-@router.message(F.chat.type == "private", F.document, resume_participant)
+@router.message(F.chat.type == "private", F.document)
 async def upload_resume(message: Message, db: VacancyDatabase, bot: Bot) -> None:
     doc = message.document
     name = doc.file_name or ""
@@ -629,14 +620,7 @@ async def _save_document(message: Message, db: VacancyDatabase, bot: Bot) -> Non
 async def cmd_start(message: Message, db: VacancyDatabase) -> None:
     payload = (message.text or "").partition(" ")[2].strip()
     if message.chat.type == "private" and payload.startswith("cv_"):
-        digest = hashlib.sha256(f"{message.chat.id}:{payload}".encode()).hexdigest()
-        if digest == RESUME_INVITE_HASH:
-            db.enable_resume_test(message.chat.id)
-            await message.answer("Тест резюме включён. Открой резюме кнопкой внизу. "
-                                 "После загрузки нажми «🔎 Вакансии сейчас».",
-                                 reply_markup=main_keyboard(message, db))
-        else:
-            await message.answer("Приглашение недоступно для этого аккаунта.")
+        await cmd_resume(message, db)
         return
     await send_welcome(message, db)
     await start_flow(message, db)

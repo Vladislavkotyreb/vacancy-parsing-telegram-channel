@@ -84,18 +84,8 @@ def skill_requirements(*fields: Any) -> tuple[list[str], list[str]]:
     return sorted(required), sorted(bonus - required)
 
 
-def match_line(vacancy: Vacancy, resume: Optional[Iterable[str]]) -> str:
-    if resume is None:
-        return "📎 Совпадение по навыкам: добавь резюме через /resume"
+def skill_score(vacancy: Vacancy, skills: Iterable[str]) -> Optional[int]:
     required = set(vacancy.skills or extract_skills(vacancy.title))
     if not required:
-        return "📎 Совпадение по навыкам: в вакансии не распознаны навыки"
-    common = sorted(required.intersection(resume))
-    score = round(100 * len(common) / len(required))
-    line = f"🎯 Совпадение по навыкам: {score}% ({len(common)} из {len(required)})"
-    if common:
-        line += "\nСовпали: " + ", ".join(common)
-    missing = sorted(required.difference(common))
-    if missing:
-        line += "\nНе найдены в резюме: " + ", ".join(missing)
-    return line
+        return None
+    return round(100 * len(required.intersection(skills)) / len(required))

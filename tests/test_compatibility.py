@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 from bot.compatibility import compatibility, parse_profile, vacancy_tasks
 from bot.database import VacancyDatabase
 from bot.models import Vacancy
+from bot.formatters import format_vacancy
 from bot.parsers.hh import HHParser
 from bot.resume import load_match_profile
 from bot.skills_match import skill_requirements
@@ -23,8 +24,7 @@ def test_task_evidence_changes_score_for_identical_skills():
     done = parse_profile(title_and_skills + "\nРуководил командой дизайнеров")
     assert listed.skills == done.skills
     a, b = (compatibility(vacancy, cv) for cv in (listed, done))
-    assert "100%" not in a and "Уточнить: управление командой" in a
-    assert "100%" in b and "Руководил командой" in b
+    assert (a, b) == (67, 100)
     assert not parse_profile("Не руководил командой").tasks
 
 
@@ -32,18 +32,16 @@ def test_overlapping_jobs_and_education():
     cv = parse_profile("Опыт работы\n01.2020 — 12.2022\nJan 2021 - Dec 2023\nОбразование\n01.2000 — 12.2015")
     assert cv.years == 4
     assert cv.years_from_dates
-    assert "Уточнить" in compatibility(job(min_years=6), cv)
+    assert compatibility(job(min_years=6), cv) == 0
     cv = parse_profile("Общий стаж: 2 года\nФормат работы: только удалённо")
     report = compatibility(job(min_years=3, work_format="Офис"), cv)
-    assert "Есть расхождение" in report and "нужно от 3" in report and "удалённо" in report
-    assert "%" not in report
+    assert report == 0
 
 
 def test_unknowns_and_bonuses():
     cv = parse_profile("Python")
     report = compatibility(job(skills=["Python"]), cv)
-    assert "Для общей оценки мало данных" in report
-    assert "100% (1 из 1)" in report and "грейд" in report
+    assert report == 17
     assert skill_requirements("Node.js. SQL будет плюсом. Excel не требуется.") == (["Node.js"], ["SQL"])
     assert not vacancy_tasks("Наставничество будет плюсом")
 
@@ -59,15 +57,12 @@ def test_hh_declared_years_and_format_are_independent_from_inferred_grade(tmp_pa
     cached, = db.load_role_cache(["designer"])["designer"]
     cv = parse_profile("Product Designer\nОпыт работы — 5 лет\nСоздала дизайн-систему\nFigma HTML\nГород: Москва\nФормат работы: офис")
     [(text, _)] = personal_pages("Сегодня", [cached], cv)
-    for phrase in ("100%", "Город: Москва", "Создала дизайн-систему", "стаж", "Плюс к профилю: HTML"):
-        assert phrase in text
-    assert "Уровень:" not in text
+    assert text.endswith(format_vacancy(cached) + "\nСовместимость вакансии — 100%")
 
 
 def test_existing_pdf_is_upgraded_once_and_concurrent_replacement_wins(tmp_path):
     async def scenario():
         db = VacancyDatabase(tmp_path / "test.db")
-        db.enable_resume_test(1)
         db.save_resume(1, ["Figma"], file_name="resume.pdf", file_id="tg-old")
         old = db.get_resume(1)["resume_id"]
         bot = AsyncMock()
@@ -87,8 +82,8 @@ def test_existing_pdf_is_upgraded_once_and_concurrent_replacement_wins(tmp_path)
 
 def test_title_alone_does_not_yield_overall_match_and_results_need_evidence():
     cv = parse_profile("Senior Python Developer")
-    assert "Для общей оценки мало данных" in compatibility(job(title="Senior Python Developer"), cv)
+    assert compatibility(job(title="Senior Python Developer"), cv) is None
     cv = parse_profile("Продуктовый дизайнер\nУвеличила конверсию с 4% до 7%")
     result = compatibility(job(tasks=["улучшение продуктовых метрик"]), cv)
-    assert "Увеличила конверсию с 4% до 7%" in result
+    assert result == 75
     assert not parse_profile("Продуктовые метрики: конверсия, retention").tasks

@@ -67,14 +67,6 @@ class VacancyDatabase:
                 """
             )
 
-    def enable_resume_test(self, user_id: int) -> None:
-        with self._connect() as conn:
-            conn.execute("INSERT OR IGNORE INTO resume_testers (user_id) VALUES (?)", (user_id,))
-
-    def resume_test_enabled(self, user_id: int) -> bool:
-        with self._connect() as conn:
-            return conn.execute("SELECT 1 FROM resume_testers WHERE user_id = ?", (user_id,)).fetchone() is not None
-
     def save_resume(self, user_id: int, skills: list[str], *, file_name: Optional[str] = None,
                     file_id: Optional[str] = None, username: Optional[str] = None,
                     profile: Optional[dict] = None) -> None:
@@ -107,7 +99,7 @@ class VacancyDatabase:
 
     def resume_skills(self, user_id: int) -> Optional[list[str]]:
         with self._connect() as conn:
-            row = conn.execute("SELECT skills_json FROM resume_profiles JOIN resume_testers USING (user_id) WHERE user_id = ?",
+            row = conn.execute("SELECT skills_json FROM resume_profiles WHERE user_id = ?",
                                (user_id,)).fetchone()
         return json.loads(row[0]) if row else None
 
@@ -141,10 +133,6 @@ class VacancyDatabase:
 
             conn.executescript(
                 """
-                CREATE TABLE IF NOT EXISTS resume_testers (
-                    user_id INTEGER PRIMARY KEY
-                );
-
                 CREATE TABLE IF NOT EXISTS resume_profiles (
                     user_id INTEGER PRIMARY KEY,
                     skills_json TEXT NOT NULL,

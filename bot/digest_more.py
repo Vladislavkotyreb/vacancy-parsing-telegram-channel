@@ -74,7 +74,8 @@ async def send_overflow(
     Отметка — после отправки: если сеть оборвётся на середине, остаток и кнопка
     сохранятся и нажатие можно повторить.
     """
-    messages = personal_pages(format_more_header(len(vacancies)), vacancies, await load_match_profile(db, bot, user_id))
+    resume = await load_match_profile(db, bot, user_id)
+    messages = personal_pages(format_more_header(len(vacancies)), vacancies, resume, user_id=user_id)
     for index, (text, batch) in enumerate(messages):
         if index:
             await asyncio.sleep(0.4)

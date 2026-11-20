@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ from unittest.mock import AsyncMock
 from aiogram.types import InlineKeyboardMarkup
 
 from bot import chat_main
+from bot.compatibility import parse_profile
 from bot.config import Settings
 from bot.database import VacancyDatabase
 from bot.menu import BTN_NOW, menu_commands
@@ -57,27 +59,25 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
     async def test_new_subscriber_gets_vacancies_right_away(self):
         self.db.save_role_cache({"backend_python": [_v(1), _v(2)], "backend_go": [_v(3, "Go-разработчик")]}, [])
         self.db.set_subscriber_roles(10, ["backend_python"])
-        self.db.enable_resume_test(10)
         self.db.save_resume(10, ["Python"])
         self.assertEqual(await self.service.send_now(10), "sent")
         text = " ".join(t for _, t, _ in self.bot.calls)
-        self.assertEqual(text.count("100% (1 из 1)"), 2)
+        self.assertEqual(text.count("Совместимость вакансии — 100%"), 2)
         self.assertIn("Python-разработчик 1", text)
         self.assertNotIn("Go-разработчик", text)
         self.assertTrue(self.db.is_sent_to_subscriber(10, "hh.ru:1"))
 
-    async def test_resume_trial_can_score_an_already_delivered_job(self):
+    async def test_resume_upload_can_score_an_already_delivered_job(self):
         self.db.set_subscriber_roles(10, ["backend_python"])
         self.db.save_role_cache({"backend_python": [_v(1)]}, [])
-        self.db.save_resume(10, ["Python"])
         self.assertEqual(await self.service.send_now(10), "sent")
-        self.assertNotIn("Совпадение", self.bot.calls[-1][1])
+        self.assertNotIn("Совместимость вакансии", self.bot.calls[-1][1])
         self.assertEqual(await self.service.send_now(10), "nothing_new")
-        self.db.enable_resume_test(10)
+        self.db.save_resume(10, ["Python"])
         self.assertEqual(await self.service.send_now(10), "sent")
         text = self.bot.calls[-1][1]
         self.assertIn("ранее полученным", text)
-        self.assertIn("100% (1 из 1)", text)
+        self.assertIn("Совместимость вакансии — 100%", text)
 
     async def test_second_press_has_nothing_new(self):
         self.db.save_role_cache({"backend_python": [_v(1)]}, [])
@@ -96,7 +96,6 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.service.send_now(99), "not_subscribed")
 
     async def test_morning_digest_fills_cache(self):
-        self.db.enable_resume_test(10)
         self.db.save_resume(10, ["Figma"])
         self.db.set_subscriber_roles(10, ["backend_python"])
 
@@ -104,8 +103,29 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
             return [_v(5)]
         with mock.patch("bot.subscriber_service.collect_for_role", side_effect=collect):
             await self.service.run_daily_digests()
-        self.assertIn("0% (0 из 1)", self.bot.calls[0][1])
+        self.assertIn("Совместимость вакансии — 0%", self.bot.calls[0][1])
         self.assertEqual([v.uid for v in self.db.load_role_cache(["backend_python"])["backend_python"]], ["hh.ru:5"])
+
+    async def test_daily_and_manual_digests_show_same_personal_percentage(self):
+        job = _v(7, "Продуктовый дизайнер")
+        job.tasks = ["управление командой", "исследования пользователей"]
+        job.skills = ["Figma"]
+        cv = parse_profile("Продуктовый дизайнер\nПроводила интервью с пользователями\nFigma")
+        self.db.save_resume(10, cv.skills, profile=asdict(cv))
+        for user_id in (10, 20):
+            self.db.set_subscriber_roles(user_id, ["product_designer"])
+
+        with mock.patch("bot.subscriber_service.collect_for_role", new=AsyncMock(return_value=[job])):
+            await self.service.run_daily_digests()
+        morning = {user_id: text for user_id, text, _ in self.bot.calls}
+        line = "Совместимость вакансии — 79%"
+        match_line, natal_line = morning[10].splitlines()[-2:]
+        self.assertEqual(match_line, line)
+        self.assertRegex(natal_line, r"^✦ Натальная карта — (?:[1-9][0-9]?|100)%$")
+        self.assertNotIn("Совместимость вакансии", morning[20])
+        self.assertNotIn("Натальная карта", morning[20])
+        self.assertEqual(await self.service.send_now(10), "sent")
+        self.assertEqual(self.bot.calls[-1][1].splitlines()[-2:], [line, natal_line])
 
     async def test_cache_save_failure_does_not_break_digest(self):
         self.db.set_subscriber_roles(10, ["backend_python"])

@@ -35,6 +35,7 @@ def menu_commands() -> list[BotCommand]:
         BotCommand(command="vacancies", description=BTN_NOW),
         BotCommand(command="myrole", description=BTN_MY_SUBSCRIPTION),
         BotCommand(command="roles", description=BTN_CHOOSE_ROLES),
+        BotCommand(command="resume", description="Моё резюме"),
         BotCommand(command="stop", description=BTN_UNSUBSCRIBE),
     ]
 

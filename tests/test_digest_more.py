@@ -114,10 +114,14 @@ class DigestMoreTest(unittest.IsolatedAsyncioTestCase):
     # --- нажатие ---
 
     async def test_press_sends_the_rest_once_and_marks_it(self):
+        self.db.save_resume(USER, ["SQL"])
+        for vacancy in self.found:
+            vacancy.skills = ["SQL"]
         await self.run_digest()
         callback = await self.press_and_reset()
 
         self.assertEqual(_numbers(self.texts()), set(range(30, 45)))
+        self.assertEqual("\n".join(self.texts()).count("Совместимость вакансии — 100%\n✦ Натальная карта — "), 15)
         self.assertIn(format_more_header(15), self.texts()[0])
         self.assertTrue(self.db.is_sent_to_subscriber(USER, "hh.ru:44"))
         callback.answer.assert_awaited()

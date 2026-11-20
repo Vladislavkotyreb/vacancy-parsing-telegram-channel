@@ -487,7 +487,7 @@ class SubscriberService:
             if fresh and resume:
                 sample = dedupe_across_sources(fresh)[:3]
                 header = "Проверка резюме по ранее полученным вакансиям"
-                for text, _ in personal_pages(header, sample, resume):
+                for text, _ in personal_pages(header, sample, resume, user_id=user_id):
                     await self._safe_send(user_id, text)
                 return "sent"
             return "nothing_new"
@@ -558,7 +558,8 @@ class SubscriberService:
             role_label, len(to_post), total_found, self.settings.max_vacancy_age_hours,
             total_new=len(all_new), region=region,
         )
-        messages = personal_pages(header, to_post, await load_match_profile(self.db, self.bot, user_id))
+        resume = await load_match_profile(self.db, self.bot, user_id)
+        messages = personal_pages(header, to_post, resume, user_id=user_id)
         for index, (message, vacancies) in enumerate(messages):
             is_last = index == len(messages) - 1
             markup = more if is_last else None

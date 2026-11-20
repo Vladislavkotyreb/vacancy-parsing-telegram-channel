@@ -52,8 +52,6 @@ def parse_resume(filename: str, data: bytes) -> list[str]:
 
 async def load_match_profile(db, bot, user_id: int):
     """Однократно извлекает профиль из ранее сохранённого в Telegram документа."""
-    if not db.resume_test_enabled(user_id):
-        return None
     record = db.get_resume(user_id)
     if not record:
         return None

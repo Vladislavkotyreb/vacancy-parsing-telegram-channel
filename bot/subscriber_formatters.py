@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from hashlib import sha256
 from typing import Optional, Union
 
 from bot.models import Vacancy
-from bot.skills_match import match_line
+from bot.skills_match import skill_score
 from bot.compatibility import ResumeProfile, compatibility
 from bot.regions import CIS, DEFAULT_REGION, WORLD, normalize_region
 from bot.roles import get_role
@@ -58,7 +59,8 @@ def format_subscriber_header(
 
 
 def personal_pages(
-    header: str, vacancies: list[Vacancy], resume: Optional[Union[ResumeProfile, list[str]]]
+    header: str, vacancies: list[Vacancy], resume: Optional[Union[ResumeProfile, list[str]]],
+    *, user_id: Optional[int] = None,
 ) -> list[tuple[str, list[Vacancy]]]:
     """Текст и вакансии каждой страницы для отметки после успешной отправки."""
     pages = []
@@ -70,8 +72,14 @@ def personal_pages(
     for vacancy in vacancies:
         metric = ""
         if resume is not None:
-            report = compatibility(vacancy, resume) if isinstance(resume, ResumeProfile) else match_line(vacancy, resume)
-            metric = "\n" + escape_html(report)
+            score = compatibility(vacancy, resume) if isinstance(resume, ResumeProfile) else skill_score(vacancy, resume)
+            if score is not None:
+                metric = f"\nСовместимость вакансии — {score}%"
+                if user_id is not None:
+                    # Шуточное число должно повторяться при следующей выдаче той же вакансии.
+                    seed = f"{user_id}:{vacancy.uid}".encode("utf-8")
+                    stars = 1 + int.from_bytes(sha256(seed).digest()[:8], "big") % 100
+                    metric += f"\n✦ Натальная карта — {stars}%"
         block = format_vacancy(vacancy) + metric
         if len(continuation + SEPARATOR + block) > TELEGRAM_MAX_LENGTH:
             block = escape_html(vacancy.title[:160]) + metric

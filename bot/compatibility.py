@@ -9,7 +9,7 @@ from typing import Optional
 from bot.grades import extract_grade
 from bot.models import Vacancy
 from bot.roles import ROLES
-from bot.skills_match import extract_skills, match_line, requirement_clauses
+from bot.skills_match import extract_skills, requirement_clauses
 
 
 @dataclass
@@ -159,111 +159,39 @@ def parse_profile(text: str) -> ResumeProfile:
     return profile
 
 
-def compatibility(vacancy: Vacancy, cv: ResumeProfile) -> str:
-    # Доля подтверждённых требований. Отсутствующие сведения остаются в знаменателе.
+def compatibility(vacancy: Vacancy, cv: ResumeProfile) -> Optional[int]:
+    """Доля подтверждённых требований с учётом весов. Одного заголовка мало."""
+    title_skills = set(extract_skills(vacancy.title))
+    skills = set(vacancy.skills or title_skills)
+    formats = work_formats(vacancy.work_format or "")
+    if not (vacancy.min_years or vacancy.tasks or formats or skills - title_skills):
+        return None
+
     ratings = []
-    unverified_weight = 0
-    reasons = []
-    unknown = []
-    conflicts = []
-
     roles = _roles(vacancy.title)
-    shared = [r for r in roles if r in cv.roles]
-    if roles and cv.roles:
-        if shared:
-            ratings.append((3, 1))
-            reasons.append("Профиль: " + ROLES[shared[0]].button_label)
-        else:
-            # Роли смежны или названы иначе — не объявляем смену профессии несовместимостью.
-            unverified_weight += 3
-            unknown.append("точный профиль должности")
-    elif roles:
-        unverified_weight += 3
-        unknown.append("роль в резюме")
+    shared = set(roles).intersection(cv.roles)
+    if roles:
+        ratings.append((3, bool(shared)))
 
-    # На HH grade иногда получен из диапазона стажа. Не считаем один факт дважды.
+    # На HH грейд из поля опыта не должен повторно учитываться как уровень.
     grade = extract_grade(vacancy.title) or (vacancy.grade if vacancy.source != "hh.ru" else None)
     if grade:
-        levels = [cv.grades[r] for r in shared if r in cv.grades]
-        if not levels:
-            unverified_weight += 2
-            unknown.append("грейд " + grade)
-        elif grade in levels:
-            ratings.append((2, 1))
-            reasons.append("Уровень: " + grade)
-        else:
-            unverified_weight += 2
-            unknown.append("грейд: вакансия " + grade + ", резюме " + "/".join(sorted(set(levels))))
-
+        ratings.append((2, any(cv.grades.get(role) == grade for role in shared)))
     if vacancy.min_years:
-        if cv.years is None:
-            unverified_weight += 2
-            unknown.append(f"стаж от {vacancy.min_years} лет")
-        elif cv.years < vacancy.min_years:
-            if cv.years_from_dates:
-                unverified_weight += 2
-                unknown.append(f"стаж от {vacancy.min_years} лет: по указанным периодам {cv.years} г.")
-            else:
-                conflicts.append(f"стаж: в резюме {cv.years} г., нужно от {vacancy.min_years}")
-        else:
-            ratings.append((2, 1))
-            reasons.append(f"Общий стаж: {cv.years} г., требуется от {vacancy.min_years}")
+        ratings.append((2, cv.years is not None and cv.years >= vacancy.min_years))
 
     tasks = set(vacancy.tasks)
     if {"head_of_design", "head_of_engineering", "head_of_data", "head_of_product", "head_of_ai"}.intersection(roles):
         tasks.add("управление командой")
     if tasks:
-        proven = sorted(tasks.intersection(cv.tasks))
-        if proven:
-            ratings.append((3, len(proven) / len(tasks)))
-            reasons.append("Практика: " + ", ".join("«" + cv.tasks[t] + "»" for t in proven))
-        else:
-            unverified_weight += 3
-        unknown.extend(sorted(tasks.difference(proven)))
-
-    formats = work_formats(vacancy.work_format or "")
+        ratings.append((3, len(tasks.intersection(cv.tasks)) / len(tasks)))
     if formats:
-        common = sorted(set(formats).intersection(cv.formats))
-        if common:
-            ratings.append((1, 1))
-            reasons.append("Формат: " + ", ".join(common))
-        elif cv.formats:
-            conflicts.append("формат: вакансия " + "/".join(formats) + ", резюме " + "/".join(cv.formats))
-        else:
-            unverified_weight += 1
-            unknown.append("формат " + "/".join(formats))
-
-    if formats and "удалённо" not in formats and vacancy.location and not work_formats(vacancy.location):
-        city = vacancy.location.strip()
-        if cv.city and cv.city.casefold() in [c.strip().casefold() for c in city.split(",")]:
-            ratings.append((1, 1))
-            reasons.append("Город: " + cv.city)
-        else:
-            unverified_weight += 1
-            unknown.append("возможность работы в указанной локации")
-
-    skills = set(vacancy.skills or extract_skills(vacancy.title))
+        ratings.append((1, bool(set(formats).intersection(cv.formats))))
+        if "удалённо" not in formats and vacancy.location and not work_formats(vacancy.location):
+            cities = {city.strip().casefold() for city in vacancy.location.split(",")}
+            ratings.append((1, bool(cv.city and cv.city.casefold() in cities)))
     if skills:
-        common = sorted(skills.intersection(cv.skills))
-        if not ratings and not conflicts:
-            reasons.append(match_line(vacancy, cv.skills))
-        else:
-            ratings.append((1, len(common) / len(skills)))
-            reasons.append(f"Навыки: {len(common)} из {len(skills)}" + (" · " + ", ".join(common) if common else ""))
-            unknown.extend(sorted(skills.difference(common)))
+        ratings.append((1, len(skills.intersection(cv.skills)) / len(skills)))
 
-    bonus = sorted(set(vacancy.bonus_skills).intersection(cv.skills))
-    if bonus:
-        reasons.append("Плюс к профилю: " + ", ".join(bonus))
-
-    beyond_title = bool(vacancy.min_years or vacancy.tasks or formats or skills.difference(extract_skills(vacancy.title)))
-    if conflicts:
-        header = "🎯 Есть расхождение: " + "; ".join(conflicts)
-    elif beyond_title and len(ratings) >= 2 and any(w >= 2 for w, _ in ratings):
-        score = round(100 * sum(w * value for w, value in ratings) / (unverified_weight + sum(w for w, _ in ratings)))
-        header = f"🎯 Резюме подтверждает {score}% распознанных требований"
-    else:
-        header = "🎯 Для общей оценки мало данных"
-    if unknown:
-        reasons.append("Уточнить: " + ", ".join(unknown))
-    return "\n".join([header] + reasons)
+    return round(100 * sum(weight * value for weight, value in ratings)
+                 / sum(weight for weight, _ in ratings))

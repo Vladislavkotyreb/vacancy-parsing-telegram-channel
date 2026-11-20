@@ -60,7 +60,7 @@ class WaitForTelegramTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.set_my_commands.await_args.kwargs["scope"].type, "all_private_chats")
         self.assertEqual(
             [command.command for command in bot.set_my_commands.await_args.args[0]],
-            ["vacancies", "myrole", "roles", "stop"],
+            ["vacancies", "myrole", "roles", "resume", "stop"],
         )
         bot.set_chat_menu_button.assert_awaited_once()
         self.assertIsInstance(bot.set_chat_menu_button.await_args.kwargs["menu_button"], MenuButtonCommands)

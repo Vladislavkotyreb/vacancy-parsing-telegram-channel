@@ -11,7 +11,7 @@ from bot.formatters import format_vacancy
 from bot.models import Vacancy
 from bot.parsers.habr_career import parse_item
 from bot.resume import parse_resume
-from bot.skills_match import match_line
+from bot.skills_match import skill_score
 from bot.subscriber_formatters import personal_pages
 
 
@@ -30,8 +30,6 @@ def test_personal_scores_from_cached_source_tags(tmp_path):
     job = parse_item({"id": 3, "title": "Designer", "skills": [
         {"title": "Figma"}, {"title": "SQL"}, {"title": "HTML"}]})
     db.save_role_cache({"design": [job]}, [])
-    db.enable_resume_test(1)
-    db.enable_resume_test(2)
     db.save_resume(1, ["Figma", "SQL"])
     db.save_resume(2, ["HTML"])
     cached, = db.load_role_cache(["design"])["design"]
@@ -39,18 +37,18 @@ def test_personal_scores_from_cached_source_tags(tmp_path):
         [(text, batch)] = personal_pages("Сегодня", [cached], db.resume_skills(user))
         assert batch == [cached]
         assert expected in text
-        assert "Не найдены в резюме" in text
+        assert text.endswith("Совместимость вакансии — " + expected)
     db.delete_resume(1)
-    assert "/resume" in match_line(cached, db.resume_skills(1))
+    assert db.get_resume(1) is None
     assert db.resume_skills(2) == ["HTML"]
-    assert "Совпадение" not in format_vacancy(cached)
+    assert "Совместимость вакансии" not in format_vacancy(cached)
 
 
 def test_old_rows_without_skill_data():
     old = Vacancy("old", "1", "Разработчик", "А", "https://example.org")
-    assert "%" not in match_line(old, ["SQL"])
+    assert skill_score(old, ["SQL"]) is None
     old.title = "Python developer"
-    assert "0% (0 из 1)" in match_line(old, ["SQL"])
+    assert skill_score(old, ["SQL"]) == 0
 
 
 def test_upload_and_overflow(tmp_path):
@@ -58,7 +56,6 @@ def test_upload_and_overflow(tmp_path):
 
     async def scenario():
         db = VacancyDatabase(Path(tmp_path) / "test.db")
-        db.enable_resume_test(1)
         doc = SimpleNamespace(file_name="cv.txt", file_size=8, file_id="file-1")
         message = SimpleNamespace(chat=SimpleNamespace(id=1), document=doc, from_user=SimpleNamespace(username="test"), answer=AsyncMock())
         bot = AsyncMock()
@@ -72,7 +69,7 @@ def test_upload_and_overflow(tmp_path):
         assert db.resume_skills(1) == ["Figma", "SQL"]
         job = Vacancy("x", "1", "Designer", "A", "url", skills=["Figma", "HTML"])
         await send_overflow(bot, db, 1, [job])
-        assert "50% (1 из 2)" in bot.send_message.await_args.kwargs["text"]
+        assert "Совместимость вакансии — 50%" in bot.send_message.await_args.kwargs["text"]
         assert db.is_sent_to_subscriber(1, job.uid)
 
     asyncio.run(scenario())
@@ -107,7 +104,6 @@ def test_resume_management_buttons(tmp_path):
             bot.download.side_effect = download
             await upload_resume(msg, db, bot)
 
-        db.enable_resume_test(42)
         await upload("cv.txt", "tg-1", b"Figma")
         first = db.get_resume(42)
         assert first["username"] == "designer" and first["file_id"] == "tg-1"
