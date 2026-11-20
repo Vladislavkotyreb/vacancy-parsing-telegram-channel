@@ -89,7 +89,7 @@ class ConcurrentStartTest(unittest.TestCase):
     def test_simultaneous_starts_leave_exactly_one(self):
         tmp = tempfile.mkdtemp()
         code = textwrap.dedent(f"""
-            import sys, time
+            import select, sys
             sys.path.insert(0, {str(REPO)!r})
             from pathlib import Path
             from bot import chat_main
@@ -97,12 +97,18 @@ class ConcurrentStartTest(unittest.TestCase):
             chat_main.LOCK_FILE = Path({tmp!r}) / "chat-bot.lock"
             chat_main._acquire_single_instance()
             print("started", flush=True)
-            time.sleep(3)
+            select.select([sys.stdin], [], [], 60)
         """)
-        procs = [subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE,
+        procs = [subprocess.Popen([sys.executable, "-c", code], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL, text=True) for _ in range(6)]
-        outputs = [p.communicate(timeout=30)[0] for p in procs]
-        self.assertEqual(sum("started" in out for out in outputs), 1)
+        try:
+            # Победитель удерживает замок, пока все конкуренты не попытались стартовать.
+            outputs = [p.stdout.readline().strip() for p in procs]
+        finally:
+            for proc in procs:
+                proc.communicate(timeout=30)
+        self.assertEqual(outputs.count("started"), 1)
+        self.assertEqual(sorted(p.returncode for p in procs), [0, 1, 1, 1, 1, 1])
 
 
 if __name__ == "__main__":
