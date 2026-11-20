@@ -30,6 +30,7 @@ import aiohttp
 from bot.dates import ensure_aware, parse_iso_datetime, utc_now
 from bot.grades import extract_grade
 from bot.models import Vacancy
+from bot.skills_match import vacancy_skills
 
 logger = logging.getLogger(__name__)
 
@@ -89,13 +90,15 @@ def _restricted_or_gig(title: str) -> bool:
 
 
 def _vacancy(source: str, external_id: str, title: str, company: str, url: str,
-             published_at: Optional[datetime], salary: Optional[str] = None) -> Optional[Vacancy]:
+             published_at: Optional[datetime], salary: Optional[str] = None,
+             description: Optional[str] = None) -> Optional[Vacancy]:
     if not title or not external_id or not url or _restricted_or_gig(title):
         return None
     return Vacancy(
         source=source,
         external_id=external_id,
         title=title,
+        skills=vacancy_skills(title, description),
         company=company or "—",
         url=url,
         salary=salary,
@@ -126,6 +129,7 @@ def parse_himalayas(item: dict[str, Any]) -> Optional[Vacancy]:
         _text(item.get("companyName")), url, published,
         _salary(item.get("minSalary"), item.get("maxSalary"), item.get("currency"),
                 item.get("salaryPeriod")),
+        description=item.get("description") or item.get("excerpt"),
     )
 
 
@@ -172,7 +176,8 @@ def parse_wwr(item: ET.Element) -> Optional[Vacancy]:
         published = ensure_aware(parsedate_to_datetime(item.findtext("pubDate") or ""))
     except (TypeError, ValueError):
         published = None
-    return _vacancy(WWR, url.rstrip("/").rsplit("/", 1)[-1], title, company, url, published)
+    return _vacancy(WWR, url.rstrip("/").rsplit("/", 1)[-1], title, company, url, published,
+                    description=item.findtext("description"))
 
 
 async def fetch_wwr(timeout: aiohttp.ClientTimeout) -> list[Vacancy]:
@@ -198,6 +203,7 @@ def parse_jobicy(item: dict[str, Any]) -> Optional[Vacancy]:
         parse_iso_datetime(str(item.get("pubDate") or "")),
         _salary(item.get("salaryMin"), item.get("salaryMax"), item.get("salaryCurrency"),
                 item.get("salaryPeriod")),
+        description=item.get("jobDescription") or item.get("jobExcerpt"),
     )
 
 

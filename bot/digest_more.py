@@ -18,7 +18,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from bot.config import Settings
 from bot.database import VacancyDatabase
 from bot.dates import is_fresh
-from bot.formatters import build_paginated_digest
+from bot.subscriber_formatters import personal_pages
 from bot.models import Vacancy
 from bot.russian import plural_ru
 
@@ -73,8 +73,8 @@ async def send_overflow(
     Отметка — после отправки: если сеть оборвётся на середине, остаток и кнопка
     сохранятся и нажатие можно повторить.
     """
-    messages, _ = build_paginated_digest(format_more_header(len(vacancies)), vacancies)
-    for index, text in enumerate(messages):
+    messages = personal_pages(format_more_header(len(vacancies)), vacancies, db.resume_skills(user_id))
+    for index, (text, batch) in enumerate(messages):
         if index:
             await asyncio.sleep(0.4)
         await bot.send_message(
@@ -83,6 +83,5 @@ async def send_overflow(
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=False,
         )
-    for vacancy in vacancies:
-        db.mark_sent_to_subscriber(user_id, vacancy)
+        db.mark_sent_many(user_id, batch)
     return len(messages)

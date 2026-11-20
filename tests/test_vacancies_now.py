@@ -57,11 +57,27 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
     async def test_new_subscriber_gets_vacancies_right_away(self):
         self.db.save_role_cache({"backend_python": [_v(1), _v(2)], "backend_go": [_v(3, "Go-разработчик")]}, [])
         self.db.set_subscriber_roles(10, ["backend_python"])
+        self.db.enable_resume_test(10)
+        self.db.save_resume(10, ["Python"])
         self.assertEqual(await self.service.send_now(10), "sent")
         text = " ".join(t for _, t, _ in self.bot.calls)
+        self.assertEqual(text.count("100% (1 из 1)"), 2)
         self.assertIn("Python-разработчик 1", text)
         self.assertNotIn("Go-разработчик", text)
         self.assertTrue(self.db.is_sent_to_subscriber(10, "hh.ru:1"))
+
+    async def test_resume_trial_can_score_an_already_delivered_job(self):
+        self.db.set_subscriber_roles(10, ["backend_python"])
+        self.db.save_role_cache({"backend_python": [_v(1)]}, [])
+        self.db.save_resume(10, ["Python"])
+        self.assertEqual(await self.service.send_now(10), "sent")
+        self.assertNotIn("Совпадение", self.bot.calls[-1][1])
+        self.assertEqual(await self.service.send_now(10), "nothing_new")
+        self.db.enable_resume_test(10)
+        self.assertEqual(await self.service.send_now(10), "sent")
+        text = self.bot.calls[-1][1]
+        self.assertIn("ранее полученным", text)
+        self.assertIn("100% (1 из 1)", text)
 
     async def test_second_press_has_nothing_new(self):
         self.db.save_role_cache({"backend_python": [_v(1)]}, [])
@@ -80,12 +96,15 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.service.send_now(99), "not_subscribed")
 
     async def test_morning_digest_fills_cache(self):
+        self.db.enable_resume_test(10)
+        self.db.save_resume(10, ["Figma"])
         self.db.set_subscriber_roles(10, ["backend_python"])
 
         async def collect(settings, role):
             return [_v(5)]
         with mock.patch("bot.subscriber_service.collect_for_role", side_effect=collect):
             await self.service.run_daily_digests()
+        self.assertIn("0% (0 из 1)", self.bot.calls[0][1])
         self.assertEqual([v.uid for v in self.db.load_role_cache(["backend_python"])["backend_python"]], ["hh.ru:5"])
 
     async def test_cache_save_failure_does_not_break_digest(self):

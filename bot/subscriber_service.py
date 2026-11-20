@@ -33,8 +33,7 @@ from bot.models import Vacancy
 from bot.roles import get_role
 from bot.russian import format_digest_roles_label
 from bot.subscriber_collect import SourceLimited, collect_for_role, shared_feeds
-from bot.formatters import format_vacancy
-from bot.subscriber_formatters import format_empty_notice, format_subscriber_digest
+from bot.subscriber_formatters import format_empty_notice, format_subscriber_header, personal_pages
 
 logger = logging.getLogger(__name__)
 
@@ -482,6 +481,14 @@ class SubscriberService:
         region = self.db.get_region(user_id)
         vacancies, fresh = self._merge_for_roles(cache, role_ids, region)
         if not dedupe_across_sources(self.db.unsent_to_subscriber(user_id, fresh)):
+            # Участник может проверить резюме, даже если утренние вакансии уже доставлены.
+            resume = self.db.resume_skills(user_id)
+            if fresh and resume:
+                sample = dedupe_across_sources(fresh)[:3]
+                header = "Проверка резюме по ранее полученным вакансиям"
+                for text, _ in personal_pages(header, sample, resume):
+                    await self._safe_send(user_id, text)
+                return "sent"
             return "nothing_new"
         await self._send_to_user(user_id, role_ids, fresh, len(vacancies), region=region)
         return "sent"
@@ -533,16 +540,7 @@ class SubscriberService:
             logger.exception("Не сохранил остаток подборки для %s", user_id)
             more = None
 
-        messages, included = format_subscriber_digest(
-            role_label,
-            to_post,
-            total_found,
-            self.settings.max_vacancy_age_hours,
-            total_new=len(all_new),
-            region=region,
-        )
-
-        if included == 0:
+        if not to_post:
             return await self._send_empty_notice(
                 user_id,
                 role_ids,
@@ -555,18 +553,16 @@ class SubscriberService:
             )
 
         delivered: Optional[Message] = None
-        pending = list(to_post)
-        for index, message in enumerate(messages):
+        header = format_subscriber_header(
+            role_label, len(to_post), total_found, self.settings.max_vacancy_age_hours,
+            total_new=len(all_new), region=region,
+        )
+        messages = personal_pages(header, to_post, self.db.resume_skills(user_id))
+        for index, (message, vacancies) in enumerate(messages):
             is_last = index == len(messages) - 1
             markup = more if is_last else None
             delivered = await self._safe_send(user_id, message, markup) or delivered
-            # Отмечаем сразу после каждого сообщения: если второе не дойдёт или
-            # процесс оборвут, первое завтра не придёт повторно.
-            # После последнего сообщения дошло всё — в том числе блоки, которые
-            # пришлось обрезать и которых поэтому нет в тексте дословно.
-            in_message = pending if is_last else [v for v in pending if format_vacancy(v) in message]
-            pending = [v for v in pending if v not in in_message]
-            self.db.mark_sent_many(user_id, in_message)
+            self.db.mark_sent_many(user_id, vacancies)
             if len(messages) > 1:
                 await asyncio.sleep(0.4)
 
@@ -576,7 +572,7 @@ class SubscriberService:
             "Подписчик %s roles=%s: отправлено %s вакансий, по кнопке ещё %s",
             user_id,
             ",".join(role_ids),
-            included,
+            len(to_post),
             len(overflow),
         )
         return len(messages), False

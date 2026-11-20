@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from aiogram import Bot
 from aiogram.methods import SendMessage
@@ -53,6 +54,37 @@ class MenuVisibilityTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(request, SendMessage)
         self.assertEqual(request.chat_id, self.user_id)
         return request
+
+    async def test_private_invite_is_bound_to_its_recipient(self):
+        payload = "cv_demo"
+        digest = hashlib.sha256(f"{self.user_id}:{payload}".encode()).hexdigest()
+        with patch("bot.chat_main.RESUME_INVITE_HASH", digest):
+            original_id = self.user_id
+            self.user_id += 1
+            self.assertIn("недоступно", (await self.command("/start " + payload)).text)
+            self.assertFalse(self.db.resume_test_enabled(self.user_id))
+            self.user_id = original_id
+            self.assertIn("недоступно", (await self.command("/start cv_wrong")).text)
+            self.assertFalse(self.db.resume_test_enabled(self.user_id))
+            self.assertIn("Добавить резюме", str((await self.command("/start " + payload)).reply_markup))
+            self.assertTrue(self.db.resume_test_enabled(self.user_id))
+
+    async def test_resume_reply_key_follows_database_and_routes_old_labels(self):
+        def labels(request):
+            return [b.text for row in request.reply_markup.keyboard for b in row]
+
+        self.assertNotIn("Добавить резюме", labels(await self.command("/menu")))
+        self.assertIn("/menu", (await self.command("/resume")).text)
+        self.db.enable_resume_test(self.user_id)
+        self.assertIn("Добавить резюме", labels(await self.command("/menu")))
+        self.assertIn("скрепку", (await self.command("Добавить резюме")).text)
+        self.db.save_resume(self.user_id, ["SQL"])
+        self.assertIn("Мои резюме", labels(await self.command("/menu")))
+        card = await self.command("Добавить резюме")
+        self.assertIn("SQL", card.text)
+        self.assertEqual([b.text for b in card.reply_markup.inline_keyboard[0]], ["Удалить", "Залить другое"])
+        self.assertIn("Добавить резюме", labels(await self.command("/delete_resume")))
+        self.assertIn("скрепку", (await self.command("Мои резюме")).text)
 
     async def test_hide_removes_keyboard_and_points_to_restore_command(self):
         request = await self.command("/hide")

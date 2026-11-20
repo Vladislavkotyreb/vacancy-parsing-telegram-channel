@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
@@ -17,6 +17,7 @@ class Vacancy:
     published_at: Optional[datetime] = None
     work_format: Optional[str] = None
     grade: Optional[str] = None
+    skills: list[str] = field(default_factory=list)
 
     @property
     def uid(self) -> str:

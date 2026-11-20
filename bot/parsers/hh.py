@@ -19,6 +19,7 @@ from bot.dates import parse_iso_datetime
 from bot.filters import is_product_designer_vacancy
 from bot.grades import resolve_grade
 from bot.models import Vacancy
+from bot.skills_match import vacancy_skills
 from bot.parsers.base import BaseParser
 
 logger = logging.getLogger(__name__)
@@ -388,10 +389,13 @@ class HHParser(BaseParser):
         experience = item.get("experience") or {}
         hh_experience_id = experience.get("id")
 
+        snippet = item.get("snippet") or {}
         return Vacancy(
             source=self.source,
             external_id=external_id,
             title=title,
+            skills=vacancy_skills(title, snippet.get("requirement"), snippet.get("responsibility"),
+                                  item.get("key_skills")),
             company=employer.get("name", "—"),
             url=item.get("alternate_url", ""),
             salary=salary,

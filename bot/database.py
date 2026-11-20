@@ -67,6 +67,47 @@ class VacancyDatabase:
                 """
             )
 
+    def enable_resume_test(self, user_id: int) -> None:
+        with self._connect() as conn:
+            conn.execute("INSERT OR IGNORE INTO resume_testers (user_id) VALUES (?)", (user_id,))
+
+    def resume_test_enabled(self, user_id: int) -> bool:
+        with self._connect() as conn:
+            return conn.execute("SELECT 1 FROM resume_testers WHERE user_id = ?", (user_id,)).fetchone() is not None
+
+    def save_resume(self, user_id: int, skills: list[str], *, file_name: Optional[str] = None,
+                    file_id: Optional[str] = None, username: Optional[str] = None) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO resume_profiles
+                   (user_id, resume_id, skills_json, file_name, file_id, username)
+                   VALUES (?, lower(hex(randomblob(16))), ?, ?, ?, ?)""",
+                (user_id, json.dumps(skills, ensure_ascii=False), file_name, file_id, username),
+            )
+
+    def get_resume(self, user_id: int) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM resume_profiles WHERE user_id = ?", (user_id,)).fetchone()
+        if row is None:
+            return None
+        resume = dict(row)
+        resume["skills"] = json.loads(resume.pop("skills_json"))
+        return resume
+
+    def resume_skills(self, user_id: int) -> Optional[list[str]]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT skills_json FROM resume_profiles JOIN resume_testers USING (user_id) WHERE user_id = ?",
+                               (user_id,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def delete_resume(self, user_id: int, resume_id: Optional[str] = None) -> bool:
+        with self._connect() as conn:
+            result = conn.execute(
+                "DELETE FROM resume_profiles WHERE user_id = ? AND (? IS NULL OR resume_id = ?)",
+                (user_id, resume_id, resume_id),
+            )
+            return result.rowcount > 0
+
     def _migrate(self) -> None:
         with self._connect() as conn:
             columns = {
@@ -89,6 +130,19 @@ class VacancyDatabase:
 
             conn.executescript(
                 """
+                CREATE TABLE IF NOT EXISTS resume_testers (
+                    user_id INTEGER PRIMARY KEY
+                );
+
+                CREATE TABLE IF NOT EXISTS resume_profiles (
+                    user_id INTEGER PRIMARY KEY,
+                    skills_json TEXT NOT NULL,
+                    resume_id TEXT,
+                    file_name TEXT,
+                    file_id TEXT,
+                    username TEXT
+                );
+
                 CREATE TABLE IF NOT EXISTS subscribers (
                     user_id INTEGER PRIMARY KEY,
                     role TEXT NOT NULL,
@@ -176,6 +230,16 @@ class VacancyDatabase:
                 );
                 """
             )
+
+            # Чат и рассылка могут запуститься одновременно после обновления.
+            conn.execute("BEGIN IMMEDIATE")
+            resume_columns = {r["name"] for r in conn.execute("PRAGMA table_info(resume_profiles)")}
+            for column in ("resume_id", "file_name", "file_id", "username"):
+                if column not in resume_columns:
+                    conn.execute(f"ALTER TABLE resume_profiles ADD COLUMN {column} TEXT")
+            conn.execute("UPDATE resume_profiles SET resume_id = lower(hex(randomblob(16))) "
+                         "WHERE resume_id IS NULL")
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_resume_id ON resume_profiles(resume_id)")
 
             subscriber_columns = {
                 row["name"] for row in conn.execute("PRAGMA table_info(subscribers)")

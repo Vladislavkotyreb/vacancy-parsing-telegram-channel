@@ -17,6 +17,7 @@ import aiohttp
 from bot.dates import ensure_aware, parse_iso_datetime, utc_now
 from bot.grades import extract_grade
 from bot.models import Vacancy
+from bot.skills_match import vacancy_skills
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ def parse_item(item: dict[str, Any]) -> Optional[Vacancy]:
         source=SOURCE,
         external_id=str(vacancy_id),
         title=title,
+        skills=vacancy_skills(title, item.get("skills")),
         company=company,
         url=BASE_URL + (item.get("href") or f"/vacancies/{vacancy_id}"),
         salary=salary,

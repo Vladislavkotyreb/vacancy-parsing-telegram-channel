@@ -3,11 +3,12 @@ from __future__ import annotations
 from typing import Optional
 
 from bot.models import Vacancy
+from bot.skills_match import match_line
 from bot.regions import CIS, DEFAULT_REGION, WORLD, normalize_region
 from bot.roles import get_role
 from bot.russian import plural_ru
 from bot.formatters import (
-    build_paginated_digest,
+    SEPARATOR, TELEGRAM_MAX_LENGTH, format_continuation_header, format_vacancy,
     escape_html,
 )
 
@@ -55,6 +56,38 @@ def format_subscriber_header(
     return header
 
 
+def personal_pages(
+    header: str, vacancies: list[Vacancy], resume: Optional[list[str]]
+) -> list[tuple[str, list[Vacancy]]]:
+    """Текст и вакансии каждой страницы для отметки после успешной отправки."""
+    pages = []
+    blocks = [header]
+    jobs = []
+    # Верхняя граница числа страниц позволяет заранее учесть заголовок продолжения.
+    upper = len(vacancies) + 1
+    continuation = format_continuation_header(upper, upper)
+    for vacancy in vacancies:
+        metric = "\n" + match_line(vacancy, resume) if resume is not None else ""
+        block = format_vacancy(vacancy) + metric
+        if len(continuation + SEPARATOR + block) > TELEGRAM_MAX_LENGTH:
+            block = escape_html(vacancy.title[:160]) + metric
+            link = f'\n<a href="{escape_html(vacancy.url)}">Открыть вакансию</a>'
+            if len(continuation + SEPARATOR + block + link) <= TELEGRAM_MAX_LENGTH:
+                block += link
+        prefix = continuation + SEPARATOR if pages else ""
+        if len(prefix + SEPARATOR.join(blocks + [block])) > TELEGRAM_MAX_LENGTH:
+            pages.append((SEPARATOR.join(blocks), jobs))
+            blocks, jobs = [], []
+        blocks.append(block)
+        jobs.append(vacancy)
+    if jobs:
+        pages.append((SEPARATOR.join(blocks), jobs))
+    return [
+        (format_continuation_header(i, len(pages)) + SEPARATOR + text if i > 1 else text, batch)
+        for i, (text, batch) in enumerate(pages, 1)
+    ]
+
+
 def format_subscriber_digest(
     role_label: str,
     new_vacancies: list[Vacancy],
@@ -66,13 +99,10 @@ def format_subscriber_digest(
     if not new_vacancies:
         return [], 0
 
-    return build_paginated_digest(
-        format_subscriber_header(
-            role_label, len(new_vacancies), total_found, max_age_hours, total_new, region
-        ),
-        new_vacancies,
-        channel_footer=False,
+    header = format_subscriber_header(
+        role_label, len(new_vacancies), total_found, max_age_hours, total_new, region
     )
+    return [text for text, _ in personal_pages(header, new_vacancies, None)], len(new_vacancies)
 
 
 def format_empty_notice(role_ids: list[str], already_sent: bool = False, max_age_hours: int = 72) -> str:

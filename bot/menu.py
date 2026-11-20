@@ -5,6 +5,8 @@ from typing import Optional
 from aiogram import Bot
 from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeChat, MenuButtonCommands, KeyboardButton, ReplyKeyboardMarkup
 
+BTN_ADD_RESUME = "Добавить резюме"
+BTN_MY_RESUMES = "Мои резюме"
 BTN_NOW = "🔎 Вакансии сейчас"
 BTN_MY_SUBSCRIPTION = "Мои вакансии"
 BTN_UNSUBSCRIBE = "Прекратить рассылку"
@@ -12,13 +14,16 @@ BTN_CHOOSE_ROLES = "Выбрать роли"
 BTN_CHOOSE_ROLES_AGAIN = "Выбрать роли заново"
 
 
-def reply_keyboard() -> ReplyKeyboardMarkup:
+def reply_keyboard(has_resume: Optional[bool] = None) -> ReplyKeyboardMarkup:
+    rows = [
+        [KeyboardButton(text=BTN_NOW)],
+        [KeyboardButton(text=BTN_MY_SUBSCRIPTION), KeyboardButton(text=BTN_CHOOSE_ROLES)],
+    ]
+    if has_resume is not None:
+        rows.append([KeyboardButton(text=BTN_MY_RESUMES if has_resume else BTN_ADD_RESUME)])
+    rows.append([KeyboardButton(text=BTN_UNSUBSCRIBE)])
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=BTN_NOW)],
-            [KeyboardButton(text=BTN_MY_SUBSCRIPTION), KeyboardButton(text=BTN_CHOOSE_ROLES)],
-            [KeyboardButton(text=BTN_UNSUBSCRIBE)],
-        ],
+        keyboard=rows,
         resize_keyboard=True,
         is_persistent=False,
         one_time_keyboard=False,

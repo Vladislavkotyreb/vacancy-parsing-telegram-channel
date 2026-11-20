@@ -7,6 +7,7 @@ import aiohttp
 from bot.dates import parse_russian_date
 from bot.filters import is_product_designer_vacancy
 from bot.models import Vacancy
+from bot.skills_match import vacancy_skills
 from bot.parsers.base import BaseParser
 
 BASE_URL = "https://geekjob.ru"
@@ -83,6 +84,7 @@ class GeekJobParser(BaseParser):
             source=self.source,
             external_id=external_id,
             title=title,
+            skills=vacancy_skills(title, item.get("skills"), item.get("tags"), item.get("description")),
             company=company,
             url=f"{BASE_URL}/vacancy/{external_id}",
             salary=item.get("salary"),

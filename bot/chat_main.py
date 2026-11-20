@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+from io import BytesIO
 import logging
 import os
 import sys
@@ -33,6 +35,7 @@ try:
 except ImportError:
     from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
 
+from bot.resume import MAX_FILE_BYTES, parse_resume
 from bot.config import Settings
 from bot.runtime import limit_threads
 from bot.database import VacancyDatabase
@@ -48,6 +51,8 @@ from bot.regions import REGION_BUTTONS, normalize_region, region_phrase
 from bot.roles import ROLES
 from bot.russian import format_subscription_roles, format_success_roles
 from bot.menu import (
+    BTN_ADD_RESUME,
+    BTN_MY_RESUMES,
     BTN_CHOOSE_ROLES,
     BTN_CHOOSE_ROLES_AGAIN,
     BTN_MY_SUBSCRIPTION,
@@ -411,13 +416,19 @@ async def _show_vacancy_step(
     )
 
 
-async def send_welcome(message: Message) -> None:
+def main_keyboard(message: Message, db: VacancyDatabase):
+    if message.chat.type == "private" and db.resume_test_enabled(message.chat.id):
+        return reply_keyboard(has_resume=db.get_resume(message.chat.id) is not None)
+    return reply_keyboard()
+
+
+async def send_welcome(message: Message, db: VacancyDatabase) -> None:
     await message.answer(
         "Привет! Каждый день в <b>10:00 (МСК)</b> присылаю новые вакансии в личку.\n\n"
         "Сначала выбери, где искать, потом специальность и вакансии — можно несколько.\n\n"
         "Значок справа в поле ввода скрывает и возвращает кнопки.",
         parse_mode="HTML",
-        reply_markup=reply_keyboard(),
+        reply_markup=main_keyboard(message, db),
     )
 
 
@@ -503,9 +514,120 @@ async def unsub_no(callback: CallbackQuery, db: VacancyDatabase) -> None:
     await callback.message.edit_text("👍 Подписка осталась — завтра в\u00a010:00 пришлю новые вакансии.")
 
 
+RESUME_UPLOAD_TEXT = (
+    "Нажми на скрепку и пришли резюме как файл TXT (UTF-8) или PDF с текстом до 2 МБ. "
+    "В PDF прочитаю первые 20 страниц. По найденным навыкам посчитаю совпадение с вакансиями."
+)
+
+
+# Ссылка выдаётся участнику лично. На сервере проверяем ссылку вместе с ID чата.
+RESUME_INVITE_HASH = "b848edcce5bb1f33e4e24014b4d38bc36c18dc3bcc663338c9dbbe0ccc64c57c"
+
+
+async def resume_participant(message: Message, db: VacancyDatabase) -> bool:
+    return db.resume_test_enabled(message.chat.id)
+
+
+@router.message(F.chat.type == "private", Command("resume"), resume_participant)
+@router.message(F.chat.type == "private", F.text.in_({BTN_ADD_RESUME, BTN_MY_RESUMES}), resume_participant)
+async def cmd_resume(message: Message, db: VacancyDatabase) -> None:
+    resume = db.get_resume(message.chat.id)
+    if resume is None:
+        await message.answer(RESUME_UPLOAD_TEXT, reply_markup=reply_keyboard(False))
+        return
+    actions = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="Удалить", callback_data="cv:delete:" + resume["resume_id"]),
+        InlineKeyboardButton(text="Залить другое", callback_data="cv:replace:" + resume["resume_id"]),
+    ]])
+    caption = (resume["file_name"] or "Моё резюме") + "\n\nНавыки: " + ", ".join(resume["skills"])
+    if resume["file_id"]:
+        try:
+            await message.answer_document(resume["file_id"], caption=caption, reply_markup=actions)
+            return
+        except TelegramBadRequest:
+            # Telegram может больше не выдавать документ по сохранённому file_id.
+            pass
+    await message.answer(caption, reply_markup=actions)
+
+
+@router.callback_query(F.message.chat.type == "private", F.data.startswith("cv:"))
+async def resume_action(callback: CallbackQuery, db: VacancyDatabase) -> None:
+    user_id = callback.from_user.id
+    if callback.message.chat.id != user_id or not db.resume_test_enabled(user_id):
+        await _answer(callback, "Открой резюме в личном чате с ботом.")
+        return
+    action, _, resume_id = callback.data[3:].partition(":")
+    async with user_lock(user_id):
+        if action == "delete":
+            if db.delete_resume(user_id, resume_id):
+                await _answer(callback)
+                await callback.message.answer("Резюме удалено.", reply_markup=reply_keyboard(False))
+                await _drop_button(callback)
+                return
+        elif action == "replace":
+            resume = db.get_resume(user_id)
+            if resume and resume["resume_id"] == resume_id:
+                await _answer(callback)
+                await callback.message.answer(RESUME_UPLOAD_TEXT +
+                                              "\nТекущее резюме заменю после успешной загрузки.")
+                return
+    await _answer(callback, "Карточка устарела. Открой /resume.", show_alert=True)
+
+
+@router.message(F.chat.type == "private", Command("delete_resume"), resume_participant)
+async def cmd_delete_resume(message: Message, db: VacancyDatabase) -> None:
+    async with user_lock(message.chat.id):
+        db.delete_resume(message.chat.id)
+        await message.answer("Резюме удалено.", reply_markup=reply_keyboard(False))
+
+
+@router.message(F.chat.type == "private", F.document, resume_participant)
+async def upload_resume(message: Message, db: VacancyDatabase, bot: Bot) -> None:
+    doc = message.document
+    name = doc.file_name or ""
+    if Path(name).suffix.lower() not in {".txt", ".pdf"} or (doc.file_size or 0) > MAX_FILE_BYTES:
+        await message.answer("Пришли резюме в TXT или PDF с текстом, до 2 МБ.")
+        return
+    async with user_lock(message.chat.id):
+        await _save_document(message, db, bot)
+
+
+async def _save_document(message: Message, db: VacancyDatabase, bot: Bot) -> None:
+    doc = message.document
+    buffer = BytesIO()
+    try:
+        await bot.download(doc, destination=buffer)
+    except (TelegramBadRequest, TelegramNetworkError, asyncio.TimeoutError):
+        await message.answer("Не удалось скачать резюме. Пришли файл ещё раз.")
+        return
+    try:
+        skills = await asyncio.get_running_loop().run_in_executor(
+            None, parse_resume, doc.file_name, buffer.getvalue()
+        )
+    except ValueError as exc:
+        await message.answer(str(exc))
+        return
+    db.save_resume(message.chat.id, skills, file_name=doc.file_name, file_id=doc.file_id,
+                   username=message.from_user.username if message.from_user else None)
+    await message.answer("Резюме принято. Навыки: " + ", ".join(skills)
+                         + ".\nОткрыть файл можно кнопкой «Мои резюме».",
+                         reply_markup=reply_keyboard(True))
+
+
 @router.message(Command("start"))
 async def cmd_start(message: Message, db: VacancyDatabase) -> None:
-    await send_welcome(message)
+    payload = (message.text or "").partition(" ")[2].strip()
+    if message.chat.type == "private" and payload.startswith("cv_"):
+        digest = hashlib.sha256(f"{message.chat.id}:{payload}".encode()).hexdigest()
+        if digest == RESUME_INVITE_HASH:
+            db.enable_resume_test(message.chat.id)
+            await message.answer("Тест резюме включён. Открой резюме кнопкой внизу. "
+                                 "После загрузки нажми «🔎 Вакансии сейчас».",
+                                 reply_markup=main_keyboard(message, db))
+        else:
+            await message.answer("Приглашение недоступно для этого аккаунта.")
+        return
+    await send_welcome(message, db)
     await start_flow(message, db)
 
 
@@ -522,7 +644,7 @@ async def cmd_hide(message: Message) -> None:
 async def cmd_menu(message: Message, db: VacancyDatabase) -> None:
     await message.answer(
         "Значок справа в поле ввода скрывает и возвращает кнопки.",
-        reply_markup=reply_keyboard(),
+        reply_markup=main_keyboard(message, db),
     )
 
 
