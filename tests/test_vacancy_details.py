@@ -71,3 +71,11 @@ def test_only_published_fields_and_legacy_data():
     vacancy = _vacancy_from_json(json.dumps(dict(source="hh.ru", external_id="1", title="Designer", company="Co", url="https://hh.ru")))
     assert "Главное" not in format_vacancy(vacancy, personal=True)
     assert "Контакт" not in format_vacancy(vacancy, personal=True)
+
+
+def test_experience_heading_yields_to_actual_minimum():
+    summary, contact = vacancy_details("Чем будешь заниматься\n— Проектировать интерфейсы.\n"
+                                       "Опыт, который хотим видеть\n— 3+ года в продуктовом дизайне.\n"
+                                       "Продукт: @demo_company\nПисать сюда @demo_hiring")
+    assert summary == "Проектировать интерфейсы. 3+ года в продуктовом дизайне."
+    assert contact == "@demo_hiring"

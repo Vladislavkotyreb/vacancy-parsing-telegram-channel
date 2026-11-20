@@ -29,7 +29,9 @@ _OTHER_CONTACT = re.compile(
 _TASK = re.compile(r"\b(?:задач|предстоит|обязанност|заниматься|проектир|разрабат|разработк|"
                    r"создав|развив|исследова|отвеча|responsibilit|design|build|develop|implement|lead)\w*", re.I)
 _REQUIREMENT = re.compile(r"\b(?:опыт|стаж|требу|необходим|портфолио|владен|знани|умени|"
-                          r"experience|portfolio|proficien|require|must)\w*", re.I)
+                          r"experience|portfolio|proficien|require|must)\w*|\b\d+\+?\s+(?:лет|год\w*|years?)\b", re.I)
+_SECTION_HEADING = re.compile(r"(?:опыт,? который (?:мы )?хотим видеть|чем (?:будешь|предстоит) заниматься|"
+                              r"что (?:мы )?(?:жд[её]м|ожидаем)(?: от (?:вас|тебя))?)[:.?]?", re.I)
 _HIRING = re.compile(r"\b(?:ищем|ищет|нужен|нужна|looking for|hiring)\b", re.I)
 
 
@@ -105,9 +107,10 @@ def vacancy_details(*fields, contacts=None, apply_to=None, tags=None) -> tuple[O
     candidates = []
     for line in lines:
         for sentence in re.split(r"(?<=[.!?;])\s+", line):
-            sentence = sentence.strip(" \t•→–").rstrip(";")
+            sentence = sentence.lstrip(" \t•→–—").strip().rstrip(";")
             if (len(sentence) >= 14 and len(sentence.split()) >= 2 and not sentence.endswith(":")
-                    and not _ADDRESS.search(sentence) and not sentence.lower().startswith(("headquarters:", "url:"))):
+                    and not _SECTION_HEADING.fullmatch(sentence) and not _ADDRESS.search(sentence)
+                    and not sentence.lower().startswith(("headquarters:", "url:"))):
                 candidates.append(sentence)
     # Сохраняем формулировки источника, в том числе «будет плюсом» и «не требуется».
     selected = []
