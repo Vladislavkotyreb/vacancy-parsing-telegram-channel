@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from aiogram.exceptions import TelegramForbiddenError
 
 from bot.broadcast import (
-    RESUME_ANNOUNCEMENT_AT, RESUME_BOT_ID, load_broadcast, run_broadcast,
+    RESUME_ANNOUNCEMENT_AT, RESUME_ANNOUNCEMENT_END, RESUME_BOT_ID, load_broadcast, run_broadcast,
     scheduled_resume_announcement, send_preview,
 )
 from bot.database import VacancyDatabase
@@ -41,7 +41,7 @@ class BroadcastTest(unittest.IsolatedAsyncioTestCase):
         due = RESUME_ANNOUNCEMENT_AT
         before = due - timedelta(hours=2)
         with patch("bot.broadcast.datetime") as clock, patch("bot.broadcast.asyncio.sleep") as sleep:
-            clock.now.side_effect = [before, before, due]
+            clock.now.side_effect = [before, due, due]
             await scheduled_resume_announcement(self.bot, self.db)
             self.assertEqual(sleep.await_args_list[0].args, (7200,))
             clock.now.side_effect = None
@@ -62,13 +62,30 @@ class BroadcastTest(unittest.IsolatedAsyncioTestCase):
             self.bot.id = 42
             await scheduled_resume_announcement(self.bot, self.db)
             self.bot.id = RESUME_BOT_ID
-            clock.now.return_value = due + timedelta(minutes=1)
+            clock.now.return_value = RESUME_ANNOUNCEMENT_END
             await scheduled_resume_announcement(self.bot, self.db)
             before = due - timedelta(seconds=1)
-            clock.now.side_effect = [before, before, due + timedelta(hours=1)]
+            clock.now.side_effect = [before, RESUME_ANNOUNCEMENT_END]
             await scheduled_resume_announcement(self.bot, self.db)
             sleep.assert_awaited_once_with(1)
         self.bot.send_animation.assert_not_awaited()
+
+    async def test_late_manual_send_and_scheduler_share_delivery_history_and_lock(self):
+        from bot.run_once import _broadcast
+        from bot.broadcast import RESUME_ANNOUNCEMENT, deliver_resume_announcement
+        from types import SimpleNamespace
+        self.bot.id = RESUME_BOT_ID
+        self.db.mark_broadcast_sent(RESUME_ANNOUNCEMENT.stem, 1)
+        args = SimpleNamespace(file=str(RESUME_ANNOUNCEMENT), send=True, include_starters=True)
+        async def sending(**kwargs):
+            await scheduled_resume_announcement(self.bot, self.db)
+            return MagicMock()
+        self.bot.send_animation.side_effect = sending
+        with patch("bot.broadcast.datetime") as clock, patch("bot.broadcast.asyncio.sleep"):
+            clock.now.return_value = RESUME_ANNOUNCEMENT_AT + timedelta(hours=1, minutes=20)
+            self.assertEqual(await _broadcast(self.bot, self.db, args, ""), 0)
+            self.assertIsNone(await deliver_resume_announcement(self.bot, self.db))
+        self.assertEqual([call.kwargs["chat_id"] for call in self.bot.send_animation.await_args_list], [2, 4])
 
     async def test_sends_to_everyone_once(self):
         stats = await run_broadcast(self.bot, self.db, BROADCAST, "текст", [1, 2])

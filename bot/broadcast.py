@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -41,6 +42,7 @@ SAFE_TO = (20, 0)
 # Единственный согласованный утренний анонс для @productdesignervacparser228bot.
 RESUME_BOT_ID = 8859745184
 RESUME_ANNOUNCEMENT_AT = datetime(2026, 11, 21, 10, tzinfo=timezone(timedelta(hours=3)))
+RESUME_ANNOUNCEMENT_END = RESUME_ANNOUNCEMENT_AT.replace(hour=SAFE_TO[0], minute=SAFE_TO[1])
 RESUME_ANNOUNCEMENT = Path(__file__).resolve().parent.parent / "broadcasts" / "2026-11-21-resume-match.html"
 
 
@@ -191,28 +193,54 @@ async def run_broadcast(
     return stats
 
 
+async def deliver_resume_announcement(bot: Bot, db: VacancyDatabase) -> Optional[BroadcastStats]:
+    """Ручной запуск и таймер используют одну базу доставок и один межпроцессный замок."""
+    now = datetime.now(RESUME_ANNOUNCEMENT_AT.tzinfo)
+    if bot.id != RESUME_BOT_ID or not RESUME_ANNOUNCEMENT_AT <= now < RESUME_ANNOUNCEMENT_END:
+        raise ValueError("Этот анонс предназначен для рабочего бота 21 ноября с 10:00 до 20:00 МСК.")
+    broadcast_id, caption = load_broadcast(RESUME_ANNOUNCEMENT)
+    video = find_video(RESUME_ANNOUNCEMENT, caption)
+    if video is None:
+        raise FileNotFoundError(RESUME_ANNOUNCEMENT.with_suffix(".mp4"))
+    with db.db_path.with_name(broadcast_id + ".lock").open("a+", encoding="utf-8") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            logger.info("Рассылка %s уже идёт в другом процессе", broadcast_id)
+            return None
+        handle.seek(0)
+        report = handle.read().strip()
+        if report:
+            logger.info("Рассылка %s уже завершена. %s", broadcast_id, report)
+            return None
+        recipients = db.broadcast_audience(include_starters=True)
+        if not recipients:
+            raise ValueError("В базе нет получателей анонса.")
+        logger.info("Начинаю рассылку %s. Получателей: %d", broadcast_id, len(recipients))
+        stats = await run_broadcast(bot, db, broadcast_id, caption, recipients, video)
+        report = (f"Доставлено сейчас: {stats.sent}. Уже получили: {stats.already_sent}. "
+                  f"Заблокировали бота: {stats.blocked}. Ошибок: {stats.failed}.")
+        logger.info("%s", report)
+        if not stats.failed:
+            handle.write(report + "\n")
+        return stats
+
+
 async def scheduled_resume_announcement(bot: Bot, db: VacancyDatabase) -> None:
     if bot.id != RESUME_BOT_ID:
         return
     due = RESUME_ANNOUNCEMENT_AT
-    # После этой минуты запуск бота уже не должен инициировать массовую рассылку.
-    expires = due + timedelta(minutes=1)
     try:
         now = datetime.now(due.tzinfo)
-        if now >= expires:
+        if now >= RESUME_ANNOUNCEMENT_END:
             return
-        broadcast_id, caption = load_broadcast(RESUME_ANNOUNCEMENT)
-        video = find_video(RESUME_ANNOUNCEMENT, caption)
-        if video is None:
-            raise FileNotFoundError(RESUME_ANNOUNCEMENT.with_suffix(".mp4"))
-        logger.info("Рассылка %s запланирована на %s МСК, включая пользователей без подписки",
-                    broadcast_id, due.strftime("%d.%m.%Y %H:%M"))
-        now = datetime.now(due.tzinfo)
+        if now < due:
+            logger.info("Рассылка %s запланирована на %s МСК, включая пользователей без подписки",
+                        RESUME_ANNOUNCEMENT.stem, due.strftime("%d.%m.%Y %H:%M"))
         while now < due:
             await asyncio.sleep((due - now).total_seconds())
             now = datetime.now(due.tzinfo)
-        if now < expires:
-            recipients = db.broadcast_audience(include_starters=True)
-            await run_broadcast(bot, db, broadcast_id, caption, recipients, video)
+        if now < RESUME_ANNOUNCEMENT_END:
+            await deliver_resume_announcement(bot, db)
     except Exception:
         logger.exception("Сбой запланированной рассылки %s", RESUME_ANNOUNCEMENT.stem)

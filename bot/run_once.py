@@ -17,7 +17,10 @@ except ImportError:
 from aiogram import Bot
 from aiogram.enums import ParseMode
 
-from bot.broadcast import SAFE_FROM, SAFE_TO, find_video, is_safe_time, load_broadcast, run_broadcast, send_preview
+from bot.broadcast import (
+    RESUME_ANNOUNCEMENT, SAFE_FROM, SAFE_TO, deliver_resume_announcement, find_video,
+    is_safe_time, load_broadcast, run_broadcast, send_preview,
+)
 from bot.config import Settings
 from bot.runtime import limit_threads
 from bot.database import VacancyDatabase
@@ -258,6 +261,15 @@ async def _broadcast(bot: Bot, db: VacancyDatabase, args: argparse.Namespace, ad
     if not args.file:
         logger.error("broadcast: укажите --file с текстом сообщения")
         return 1
+    if args.send and Path(args.file).stem == RESUME_ANNOUNCEMENT.stem:
+        if not args.include_starters or Path(args.file).resolve() != RESUME_ANNOUNCEMENT.resolve():
+            logger.error("Для анонса всем используйте исходный файл рассылки и --include-starters.")
+            return 1
+        stats = await deliver_resume_announcement(bot, db)
+        if stats is not None:
+            await _notify_admin(bot, admin_id, f"Анонс подписчикам. Доставлено: {stats.sent}. "
+                                f"Уже получили: {stats.already_sent}. Ошибок: {stats.failed}.")
+        return int(stats is not None and stats.failed > 0)
     broadcast_id, text = load_broadcast(Path(args.file))
     video = find_video(Path(args.file), text)
     user_ids = db.broadcast_audience(include_starters=args.include_starters)

@@ -76,17 +76,17 @@ def personal_pages(
             score = compatibility(vacancy, resume) if isinstance(resume, ResumeProfile) else skill_score(vacancy, resume)
             if score is not None:
                 metric = f"\nСовместимость вакансии — {score}%"
-                if user_id is not None:
-                    # Шуточное число должно повторяться при следующей выдаче той же вакансии.
-                    seed = f"{user_id}:{vacancy.uid}".encode("utf-8")
-                    stars = 1 + int.from_bytes(sha256(seed).digest()[:8], "big") % 100
-                    metric += f"\n✦ Натальная карта — {stars}%"
+        # Даже в карточке без резюме или требований есть прогноз по натальной карте.
+        seed = vacancy.uid if user_id is None else f"{user_id}:{vacancy.uid}"
+        stars = 1 + int.from_bytes(sha256(seed.encode("utf-8")).digest()[:8], "big") % 100
+        metric += f"\n✦ Натальная карта — {stars}%"
         block = format_vacancy(vacancy, personal=True) + metric
         if len(continuation + SEPARATOR + block) > TELEGRAM_MAX_LENGTH:
-            block = escape_html(vacancy.title[:160]) + metric
+            block = escape_html(vacancy.title[:160])
             link = f'\n<a href="{escape(vacancy.url)}">Открыть вакансию</a>'
-            if len(continuation + SEPARATOR + block + link) <= TELEGRAM_MAX_LENGTH:
+            if len(continuation + SEPARATOR + block + link + metric) <= TELEGRAM_MAX_LENGTH:
                 block += link
+            block += metric
         prefix = continuation + SEPARATOR if pages else ""
         if len(prefix + SEPARATOR.join(blocks + [block])) > TELEGRAM_MAX_LENGTH:
             pages.append((SEPARATOR.join(blocks), jobs))

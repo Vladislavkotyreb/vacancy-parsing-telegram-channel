@@ -37,7 +37,7 @@ def test_personal_scores_from_cached_source_tags(tmp_path):
         [(text, batch)] = personal_pages("Сегодня", [cached], db.resume_skills(user))
         assert batch == [cached]
         assert expected in text
-        assert text.endswith("Совместимость вакансии — " + expected)
+        assert text.splitlines()[-2] == "Совместимость вакансии — " + expected
     db.delete_resume(1)
     assert db.get_resume(1) is None
     assert db.resume_skills(2) == ["HTML"]

@@ -123,7 +123,7 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(match_line, line)
         self.assertRegex(natal_line, r"^✦ Натальная карта — (?:[1-9][0-9]?|100)%$")
         self.assertNotIn("Совместимость вакансии", morning[20])
-        self.assertNotIn("Натальная карта", morning[20])
+        self.assertRegex(morning[20].splitlines()[-1], r"^✦ Натальная карта — (?:[1-9][0-9]?|100)%$")
         self.assertEqual(await self.service.send_now(10), "sent")
         self.assertEqual(self.bot.calls[-1][1].splitlines()[-2:], [line, natal_line])
 
