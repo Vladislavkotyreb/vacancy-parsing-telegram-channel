@@ -5,10 +5,7 @@
 ## 1. Обновить код
 
 ```bash
-cd /var/www/u3452280/data/vacancy-bot
-git pull
-.venv/bin/pip install -r requirements.txt
-mkdir -p logs
+cd /var/www/u3452280/data/vacancy-bot && git pull --ff-only origin main && bash deploy/isp/restart.sh
 ```
 
 ## 2. Cron: рассылка подписчикам (отдельно от канала)
@@ -58,8 +55,8 @@ nohup .venv/bin/python -m bot.chat_main >> logs/chat-bot.log 2>&1 &
 
 - После старта появится штатная кнопка Telegram «Меню» рядом с полем ввода:
   открыть → закрыть → выбрать «Мои вакансии». Список регистрируется ботом,
-  настраивать его вручную в BotFather не нужно. Если ещё видна старая большая
-  панель, нажатие «Мои вакансии» уберёт её; новые подборки её не возвращают.
+  при регистрации меню Telegram подтверждает запрос. Кнопка «Добавить резюме»
+  появляется на нижней панели, а после загрузки PDF меняется на «Мои резюме».
 - Напиши боту `/start` в личку → выбери роли
 - Проверка без отправки: `PYTHONIOENCODING=utf-8 .venv/bin/python -m bot.run_once subscribers-preview`
 - Ручная рассылка: `PYTHONIOENCODING=utf-8 .venv/bin/python -m bot.run_once subscribers`

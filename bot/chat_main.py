@@ -37,6 +37,7 @@ except ImportError:
 
 from bot.broadcast import scheduled_resume_announcement
 from bot.resume import MAX_FILE_BYTES, parse_resume_profile
+from bot.resume_menu import refresh_existing_chats, refresh_resume_menu
 from bot.config import Settings
 from bot.runtime import limit_threads
 from bot.database import VacancyDatabase
@@ -245,7 +246,16 @@ class TrackActivityMiddleware:
                 )
             except Exception:
                 logger.exception("Не удалось записать активность пользователя %s", user.id)
-        return await handler(event, data)
+        result = await handler(event, data)
+        message = getattr(event, "message", None)
+        if message is None:
+            message = getattr(getattr(event, "callback_query", None), "message", None)
+        if isinstance(message, Message) and message.chat.type == "private":
+            try:
+                await refresh_resume_menu(data["bot"], self.db, message.chat.id, proactive=False)
+            except Exception:
+                logger.exception("Не удалось обновить меню после действия в чате %s", message.chat.id)
+        return result
 
     @classmethod
     def _is_user_action(cls, event: TelegramObject) -> bool:
@@ -423,13 +433,19 @@ def main_keyboard(message: Message, db: VacancyDatabase):
     return reply_keyboard()
 
 
+async def answer_with_menu(message: Message, db: VacancyDatabase, text: str) -> None:
+    async with user_lock(message.chat.id):
+        await message.answer(text, parse_mode="HTML", reply_markup=main_keyboard(message, db))
+        if message.chat.type == "private":
+            db.finish_resume_menu(message.chat.id)
+
+
 async def send_welcome(message: Message, db: VacancyDatabase) -> None:
-    await message.answer(
+    await answer_with_menu(
+        message, db,
         "Привет! Каждый день в <b>10:00 (МСК)</b> присылаю новые вакансии в личку.\n\n"
         "Сначала выбери, где искать, потом специальность и вакансии — можно несколько.\n\n"
         "Значок справа в поле ввода скрывает и возвращает кнопки.",
-        parse_mode="HTML",
-        reply_markup=main_keyboard(message, db),
     )
 
 
@@ -526,7 +542,7 @@ RESUME_UPLOAD_TEXT = (
 async def cmd_resume(message: Message, db: VacancyDatabase) -> None:
     resume = db.get_resume(message.chat.id)
     if resume is None:
-        await message.answer(RESUME_UPLOAD_TEXT, reply_markup=reply_keyboard(False))
+        await answer_with_menu(message, db, RESUME_UPLOAD_TEXT)
         return
     actions = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="Удалить", callback_data="cv:delete:" + resume["resume_id"]),
@@ -566,6 +582,7 @@ async def resume_action(callback: CallbackQuery, db: VacancyDatabase) -> None:
             if db.delete_resume(user_id, resume_id):
                 await _answer(callback)
                 await callback.message.answer("Резюме удалено.", reply_markup=reply_keyboard(False))
+                db.finish_resume_menu(user_id)
                 await _drop_button(callback)
                 return
         elif action == "replace":
@@ -583,6 +600,7 @@ async def cmd_delete_resume(message: Message, db: VacancyDatabase) -> None:
     async with user_lock(message.chat.id):
         db.delete_resume(message.chat.id)
         await message.answer("Резюме удалено.", reply_markup=reply_keyboard(False))
+        db.finish_resume_menu(message.chat.id)
 
 
 @router.message(F.chat.type == "private", F.document)
@@ -615,6 +633,7 @@ async def _save_document(message: Message, db: VacancyDatabase, bot: Bot) -> Non
                    username=message.from_user.username if message.from_user else None)
     await message.answer("Резюме сохранено. Нажми «🔎 Вакансии сейчас», чтобы сравнить его с вакансиями.",
                          reply_markup=reply_keyboard(True))
+    db.finish_resume_menu(message.chat.id)
 
 
 @router.message(Command("start"))
@@ -628,20 +647,20 @@ async def cmd_start(message: Message, db: VacancyDatabase) -> None:
 
 
 @router.message(Command("hide"))
-async def cmd_hide(message: Message) -> None:
-    await message.answer(
-        "Панель убрана. Чтобы вернуть кнопки, отправь /menu.\n"
-        "Подписка и рассылка продолжают работать.",
-        reply_markup=ReplyKeyboardRemove(),
-    )
+async def cmd_hide(message: Message, db: VacancyDatabase) -> None:
+    async with user_lock(message.chat.id):
+        await message.answer(
+            "Панель убрана. Чтобы вернуть кнопки, отправь /menu.\n"
+            "Подписка и рассылка продолжают работать.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        if message.chat.type == "private":
+            db.finish_resume_menu(message.chat.id)
 
 
 @router.message(Command("menu"))
 async def cmd_menu(message: Message, db: VacancyDatabase) -> None:
-    await message.answer(
-        "Значок справа в поле ввода скрывает и возвращает кнопки.",
-        reply_markup=main_keyboard(message, db),
-    )
+    await answer_with_menu(message, db, "Значок справа в поле ввода скрывает и возвращает кнопки.")
 
 
 @router.message(Command("roles"))
@@ -1060,12 +1079,16 @@ async def main() -> None:
 
     logger.info("Чат-бот подписок запущен (polling)")
     announcement = asyncio.create_task(scheduled_resume_announcement(bot, db))
+    tasks = [announcement]
     try:
         await _wait_for_telegram(bot, admin_id=settings.telegram_admin_id)
+        logger.info("Общее меню резюме зарегистрировано в Telegram, PID %s", os.getpid())
+        tasks.append(asyncio.create_task(refresh_existing_chats(bot, db)))
         await dp.start_polling(bot)
     finally:
-        announcement.cancel()
-        await asyncio.gather(announcement, return_exceptions=True)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         _release_single_instance()
         await bot.session.close()
 

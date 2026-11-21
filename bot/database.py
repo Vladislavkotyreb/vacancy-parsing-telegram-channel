@@ -233,6 +233,18 @@ class VacancyDatabase:
 
             # Чат и рассылка могут запуститься одновременно после обновления.
             conn.execute("BEGIN IMMEDIATE")
+            # Снимок старых чатов один раз, в одной транзакции со схемой.
+            if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                                "AND name='resume_menu_pending'").fetchone():
+                conn.execute("CREATE TABLE resume_menu_pending (user_id INTEGER PRIMARY KEY)")
+                conn.execute("""
+                    INSERT INTO resume_menu_pending SELECT user_id FROM (
+                        SELECT user_id FROM users UNION SELECT user_id FROM subscribers
+                        UNION SELECT user_id FROM resume_profiles UNION SELECT user_id FROM user_region
+                        UNION SELECT user_id FROM broadcast_sent UNION SELECT user_id FROM user_activity
+                        UNION SELECT user_id FROM subscriber_sent
+                    ) WHERE user_id > 0
+                """)
             resume_columns = {r["name"] for r in conn.execute("PRAGMA table_info(resume_profiles)")}
             for column in ("resume_id", "file_name", "file_id", "username", "profile_json"):
                 if column not in resume_columns:
@@ -757,6 +769,25 @@ class VacancyDatabase:
                     )
                 ]
         return ids
+
+    def pending_resume_menus(self) -> list[int]:
+        with self._connect() as conn:
+            return [row[0] for row in conn.execute("""
+                SELECT p.user_id FROM resume_menu_pending p
+                LEFT JOIN subscribers s ON s.user_id = p.user_id
+                WHERE s.active = 1 OR s.user_id IS NULL ORDER BY p.user_id
+            """)]
+
+    def needs_resume_menu(self, user_id: int, *, proactive: bool = False) -> bool:
+        with self._connect() as conn:
+            return conn.execute("""
+                SELECT 1 FROM resume_menu_pending WHERE user_id = ?
+                AND (? = 0 OR user_id NOT IN (SELECT user_id FROM subscribers WHERE active = 0))
+            """, (user_id, proactive)).fetchone() is not None
+
+    def finish_resume_menu(self, user_id: int) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM resume_menu_pending WHERE user_id = ?", (user_id,))
 
     def was_broadcast_sent(self, broadcast_id: str, user_id: int) -> bool:
         with self._connect() as conn:
