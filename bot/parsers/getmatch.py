@@ -8,6 +8,7 @@ from bot.dates import parse_iso_datetime
 from bot.filters import is_product_designer_vacancy
 from bot.models import Vacancy
 from bot.skills_match import skill_requirements
+from bot.vacancy_details import vacancy_details
 from bot.compatibility import vacancy_tasks, work_formats
 from bot.parsers.base import BaseParser
 
@@ -73,11 +74,16 @@ class GetMatchParser(BaseParser):
         url = f"{BASE_URL}{path}" if path.startswith("/") else path
 
         skills, bonus = skill_requirements(title, offer.get("stack"), offer.get("skills"), offer.get("description"))
+        summary, contact = vacancy_details(
+            offer.get("offer_description"), offer.get("description_html"), offer.get("description"),
+            contacts=offer.get("contacts"), tags=offer.get("skills_objects") or offer.get("skills"),
+        )
         return Vacancy(
             source=self.source,
             external_id=external_id,
             title=title,
             tasks=vacancy_tasks(offer.get("description")),
+            summary=summary, application_contact=contact,
             skills=skills,
             bonus_skills=bonus,
             company=company,

@@ -49,6 +49,9 @@ class _FakeResponse:
     async def json(self):
         return self._data
 
+    async def text(self):
+        return self._data
+
     async def __aenter__(self):
         return self
 
@@ -66,6 +69,9 @@ class _FakeSession:
         pass
 
     def get(self, url, params=None):
+        if params is None:
+            return _FakeResponse('<div id="vacancy-description">Проектировать интерфейсы для B2B. '
+                                 'Для отклика: @design_hiring</div><footer>Контакт: @site_admin</footer>')
         _FakeSession.calls.append(dict(params or {}))
         page = int(params["page"])
         item = {"id": f"id-{page}", "position": self.TITLES[page],
@@ -92,6 +98,8 @@ class GeekJobFeedTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(set(params), {"page"})
         self.assertEqual(sorted(v.title for v in vacancies),
                          ["Product Designer", "Python Developer", "QA Engineer"])
+        self.assertTrue(all(v.application_contact == "@design_hiring" for v in vacancies))
+        self.assertTrue(all(v.summary == "Проектировать интерфейсы для B2B." for v in vacancies))
 
     async def test_feed_downloaded_once_per_run_and_filtered_per_role(self):
         _FakeSession.calls = []

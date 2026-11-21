@@ -22,6 +22,8 @@ class Vacancy:
     bonus_skills: list[str] = field(default_factory=list)
     tasks: list[str] = field(default_factory=list)
     min_years: Optional[int] = None
+    summary: Optional[str] = None
+    application_contact: Optional[str] = None
 
     @property
     def uid(self) -> str:

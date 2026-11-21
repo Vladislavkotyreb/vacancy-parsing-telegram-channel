@@ -57,7 +57,7 @@ def test_hh_declared_years_and_format_are_independent_from_inferred_grade(tmp_pa
     cached, = db.load_role_cache(["designer"])["designer"]
     cv = parse_profile("Product Designer\nОпыт работы — 5 лет\nСоздала дизайн-систему\nFigma HTML\nГород: Москва\nФормат работы: офис")
     [(text, _)] = personal_pages("Сегодня", [cached], cv)
-    assert text.endswith(format_vacancy(cached) + "\nСовместимость вакансии — 100%")
+    assert text.endswith(format_vacancy(cached, personal=True) + "\nСовместимость вакансии — 100%")
 
 
 def test_existing_pdf_is_upgraded_once_and_concurrent_replacement_wins(tmp_path):
