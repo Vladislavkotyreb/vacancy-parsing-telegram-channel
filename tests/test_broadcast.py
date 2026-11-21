@@ -36,7 +36,7 @@ class BroadcastTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.db.broadcast_audience(), [1, 2])
         self.assertEqual(self.db.broadcast_audience(include_starters=True), [1, 2, 4])
 
-    async def test_resume_announcement_waits_then_delivers_video_to_subscribers_once(self):
+    async def test_resume_announcement_waits_then_delivers_video_to_subscribers_and_starters_once(self):
         self.bot.id = RESUME_BOT_ID
         due = RESUME_ANNOUNCEMENT_AT
         before = due - timedelta(hours=2)
@@ -48,8 +48,10 @@ class BroadcastTest(unittest.IsolatedAsyncioTestCase):
             clock.now.return_value = due
             await scheduled_resume_announcement(self.bot, self.db)
         deliveries = [call.kwargs for call in self.bot.send_animation.await_args_list]
-        self.assertEqual([message["chat_id"] for message in deliveries], [1, 2])
+        self.assertEqual([message["chat_id"] for message in deliveries], [1, 2, 4])
         self.assertIn("Добавить резюме", deliveries[0]["caption"])
+        self.assertIn("Главное", deliveries[0]["caption"])
+        self.assertIn("контакт для отклика", deliveries[0]["caption"])
         self.assertEqual((deliveries[0]["width"], deliveries[0]["height"]), (1080, 1350))
         self.bot.send_message.assert_not_awaited()
 

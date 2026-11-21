@@ -205,12 +205,14 @@ async def scheduled_resume_announcement(bot: Bot, db: VacancyDatabase) -> None:
         video = find_video(RESUME_ANNOUNCEMENT, caption)
         if video is None:
             raise FileNotFoundError(RESUME_ANNOUNCEMENT.with_suffix(".mp4"))
-        logger.info("Рассылка %s запланирована на %s МСК", broadcast_id, due.strftime("%d.%m.%Y %H:%M"))
+        logger.info("Рассылка %s запланирована на %s МСК, включая пользователей без подписки",
+                    broadcast_id, due.strftime("%d.%m.%Y %H:%M"))
         now = datetime.now(due.tzinfo)
         while now < due:
             await asyncio.sleep((due - now).total_seconds())
             now = datetime.now(due.tzinfo)
         if now < expires:
-            await run_broadcast(bot, db, broadcast_id, caption, db.broadcast_audience(), video)
+            recipients = db.broadcast_audience(include_starters=True)
+            await run_broadcast(bot, db, broadcast_id, caption, recipients, video)
     except Exception:
         logger.exception("Сбой запланированной рассылки %s", RESUME_ANNOUNCEMENT.stem)
