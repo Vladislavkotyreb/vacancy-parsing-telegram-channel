@@ -51,10 +51,10 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
         chat_main._now_pressed_at.clear()
         from bot import subscriber_service
         subscriber_service._now_failed_at.clear()
-        # Тесты не должны зависеть от того, попали ли они на окно утренней рассылки.
-        quiet = mock.patch.object(SubscriberService, "in_quiet_window", return_value=False)
-        quiet.start()
-        self.addCleanup(quiet.stop)
+        # Все источники заменены заглушками, в том числе при уже свежем кэше.
+        collect = mock.patch("bot.subscriber_service.collect_for_role", new=AsyncMock(return_value=[]))
+        self.collect = collect.start()
+        self.addCleanup(collect.stop)
 
     async def test_new_subscriber_gets_vacancies_right_away(self):
         self.db.save_role_cache({"backend_python": [_v(1), _v(2)], "backend_go": [_v(3, "Go-разработчик")]}, [])
@@ -67,17 +67,16 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Go-разработчик", text)
         self.assertTrue(self.db.is_sent_to_subscriber(10, "hh.ru:1"))
 
-    async def test_resume_upload_can_score_an_already_delivered_job(self):
+    async def test_resume_upload_does_not_replay_a_delivered_job(self):
         self.db.set_subscriber_roles(10, ["backend_python"])
         self.db.save_role_cache({"backend_python": [_v(1)]}, [])
         self.assertEqual(await self.service.send_now(10), "sent")
         self.assertNotIn("Совместимость вакансии", self.bot.calls[-1][1])
         self.assertEqual(await self.service.send_now(10), "nothing_new")
         self.db.save_resume(10, ["Python"])
-        self.assertEqual(await self.service.send_now(10), "sent")
-        text = self.bot.calls[-1][1]
-        self.assertIn("ранее полученным", text)
-        self.assertIn("Совместимость вакансии — 100%", text)
+        self.bot.calls.clear()
+        self.assertEqual(await self.service.send_now(10), "nothing_new")
+        self.assertEqual(self.bot.calls, [])
 
     async def test_second_press_has_nothing_new(self):
         self.db.save_role_cache({"backend_python": [_v(1)]}, [])
@@ -124,8 +123,12 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(natal_line, r"^✦ Натальная карта — (?:[1-9][0-9]?|100)%$")
         self.assertNotIn("Совместимость вакансии", morning[20])
         self.assertRegex(morning[20].splitlines()[-1], r"^✦ Натальная карта — (?:[1-9][0-9]?|100)%$")
-        self.assertEqual(await self.service.send_now(10), "sent")
-        self.assertEqual(self.bot.calls[-1][1].splitlines()[-2:], [line, natal_line])
+        self.assertEqual(await self.service.send_now(10), "nothing_new")
+        # Этот же профиль получает вакансию вручную впервые.
+        self.db.save_resume(30, cv.skills, profile=asdict(cv))
+        self.db.set_subscriber_roles(30, ["product_designer"])
+        self.assertEqual(await self.service.send_now(30), "sent")
+        self.assertIn(line, self.bot.calls[-1][1].splitlines())
 
     async def test_cache_save_failure_does_not_break_digest(self):
         self.db.set_subscriber_roles(10, ["backend_python"])
@@ -163,9 +166,10 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
         msg = SimpleNamespace(text=BTN_NOW, from_user=SimpleNamespace(id=10), answer=AsyncMock())
         await chat_main.btn_now(msg, self.db, self.settings, self.bot)
         self.assertTrue(self.bot.calls, "подборка ушла")
-        msg.answer.assert_not_awaited()  # сбор свежий — без «ищу» и без лишних сообщений
+        msg.answer.assert_awaited_once_with(chat_main.NOW_SEARCHING_TEXT)
         await chat_main.btn_now(msg, self.db, self.settings, self.bot)
         self.assertEqual(msg.answer.await_args.args[0], chat_main.NOW_COOLDOWN_TEXT)
+        self.collect.assert_awaited_once()
 
     async def test_button_handler_explains_nothing_new(self):
         self.db.save_role_cache({"backend_python": []}, [])
@@ -249,12 +253,28 @@ class LiveSearchTest(VacanciesNowTest):
         self.assertIn("Python-разработчик 2", self.sent_text())
         self.assertNotIn("Python-разработчик 1 ", self.sent_text() + " ")
 
-    async def test_recent_search_is_reused(self):
-        self.db.save_role_cache({"backend_python": [_v(1)]}, [])  # только что
+    async def test_button_after_morning_digest_checks_sources_and_only_sends_new_jobs(self):
         self.db.set_subscriber_roles(10, ["backend_python"])
-        with mock.patch("bot.subscriber_service.collect_for_role", side_effect=AssertionError("не должен искать")):
-            await self.press()
-        self.assertIn("Python-разработчик 1", self.sent_text())
+        self.collect.return_value = [_v(1)]
+        await self.service.run_daily_digests()
+        self.db.save_resume(10, ["Python"])
+        self.bot.calls.clear()
+        self.collect.reset_mock()
+        same_job = _v(1)
+        same_job.source = "getmatch.ru"
+        self.collect.return_value = [same_job, _v(1), _v(2)]
+        await self.press()
+        self.collect.assert_awaited_once()
+        self.assertNotIn("Python-разработчик 1", self.sent_text())
+        self.assertIn("Python-разработчик 2", self.sent_text())
+        self.assertEqual(self.sent_text().count("Совместимость вакансии"), 1)
+
+        self.bot.calls.clear()
+        chat_main._now_pressed_at.clear()  # разрешено следующее нажатие
+        msg = await self.press()
+        self.assertEqual(self.collect.await_count, 2)
+        self.assertEqual(self.bot.calls, [])
+        msg.answer.assert_awaited_with(chat_main.NOW_TEXTS["nothing_new"])
 
     async def test_never_collected_role_is_searched(self):
         self.db.set_subscriber_roles(10, ["backend_python"])
@@ -366,21 +386,15 @@ class ReviewFixes2Test(LiveSearchTest):
         collect.assert_awaited_once()
         self.assertIn("Python-разработчик 2", self.sent_text())
 
-    async def test_no_search_around_morning_digest(self):
-        self.db.save_role_cache({"backend_python": [_v(1)]}, [])
-        _age_cache(self.db, "backend_python", 90)
+    async def test_incomplete_search_does_not_replay_seen_jobs_or_report_complete(self):
         self.db.set_subscriber_roles(10, ["backend_python"])
-        with mock.patch.object(SubscriberService, "in_quiet_window", return_value=True), \
-             mock.patch("bot.subscriber_service.collect_for_role", side_effect=AssertionError("не должен искать")):
-            msg = await self.press()
-        self.assertIn("Python-разработчик 1", self.sent_text())
-        self.assertNotIn(chat_main.NOW_SEARCHING_TEXT, [c.args[0] for c in msg.answer.await_args_list])
-
-    async def test_quiet_window_bounds(self):
-        from bot.subscriber_service import is_quiet_time
-        cases = {(9, 54): False, (9, 55): True, (10, 15): True, (10, 44): True, (10, 45): False, (18, 0): False}
-        for (h, m), expected in cases.items():
-            self.assertEqual(is_quiet_time(h, m), expected, (h, m))
+        self.db.save_resume(10, ["Python"])
+        self.db.save_role_cache({"backend_python": [_v(1)]}, [])
+        self.db.mark_sent_to_subscriber(10, _v(1))
+        self.collect.side_effect = RuntimeError("HH недоступен")
+        msg = await self.press()
+        self.assertEqual(self.bot.calls, [])
+        msg.answer.assert_awaited_with(chat_main.NOW_TEXTS["incomplete"])
 
     async def test_waiting_for_someone_elses_search_is_bounded(self):
         import asyncio
@@ -413,9 +427,7 @@ class ReviewFixes2Test(LiveSearchTest):
         self.assertIn("Не получилось", msg.answer.await_args.args[0])
 
     async def test_searching_message_only_when_searching(self):
-        self.db.save_role_cache({"backend_python": [_v(1)]}, [])  # свежий — искать нечего
-        self.db.set_subscriber_roles(10, ["backend_python"])
-        msg = await self.press()
+        msg = await self.press()  # Без подписки поиск не начинается.
         self.assertNotIn(chat_main.NOW_SEARCHING_TEXT, [c.args[0] for c in msg.answer.await_args_list])
 
 
@@ -445,6 +457,13 @@ class LockSafetyTest(LiveSearchTest):
         for _ in range(5):
             await loop.run_in_executor(None, lambda: None)
         self.assertFalse(lock.locked(), "замок не должен остаться занятым после отмены")
+
+    async def test_roles_outside_previous_search_budget_are_checked_first(self):
+        self.db.set_subscriber_roles(10, ["backend_go", "backend_python"])
+        self.db.save_role_cache({"backend_go": []}, [])
+        await self.service.refresh_for_user(10)
+        self.assertEqual([call.args[1].id for call in self.collect.await_args_list],
+                         ["backend_python", "backend_go"])
 
     async def test_role_not_started_without_enough_time(self):
         from bot import subscriber_service

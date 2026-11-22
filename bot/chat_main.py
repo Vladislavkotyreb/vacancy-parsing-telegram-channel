@@ -14,7 +14,7 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
@@ -80,7 +80,8 @@ NOW_COOLDOWN_SEC = 60
 NOW_TEXTS = {
     "not_subscribed": "Сначала выбери роли — кнопка «Выбрать роли» в меню Telegram.",
     "no_cache": "Площадки сейчас не отвечают — попробуй через несколько минут.",
-    "nothing_new": "Новых вакансий пока нет — всё свежее ты уже получил.\nЗагляни позже или дождись утренней подборки.",
+    "nothing_new": "Новых вакансий пока нет.",
+    "incomplete": "Пока новых вакансий не нашёл. Не все площадки удалось проверить — попробуй позже.",
     "digest_running": "Утренняя рассылка идёт прямо сейчас — подборка придёт через пару минут.",
     "error": "Не получилось — попробуй через несколько минут.",
 }
@@ -631,7 +632,7 @@ async def _save_document(message: Message, db: VacancyDatabase, bot: Bot) -> Non
         return
     db.save_resume(message.chat.id, profile.skills, profile=asdict(profile), file_name=doc.file_name, file_id=doc.file_id,
                    username=message.from_user.username if message.from_user else None)
-    await message.answer("Резюме сохранено. Нажми «🔎 Вакансии сейчас», чтобы сравнить его с вакансиями.",
+    await message.answer("Резюме сохранено. Нажми «🔎 Вакансии сейчас», чтобы найти новые вакансии по твоим ролям.",
                          reply_markup=reply_keyboard(True))
     db.finish_resume_menu(message.chat.id)
 
@@ -675,11 +676,7 @@ _now_pressed_at: dict[int, float] = {}
 @router.message(Command("vacancies"))
 @router.message(F.text == BTN_NOW)
 async def btn_now(message: Message, db: VacancyDatabase, settings: Settings, bot: Bot) -> None:
-    """Новые вакансии по ролям прямо сейчас: бот ищет на площадках и присылает то, чего ещё не было.
-
-    Роль, которую искали меньше 30 минут назад (утром или по чужому нажатию),
-    заново не ищется — берётся этот сбор. Поиски идут по одному на весь бот.
-    """
+    """Найти новые вакансии по ролям пользователя и отправить ещё не доставленные."""
     if not message.from_user:
         return
     user_id = message.from_user.id
@@ -692,13 +689,14 @@ async def btn_now(message: Message, db: VacancyDatabase, settings: Settings, bot
         await message.answer(NOW_TEXTS["digest_running"])
         return
     _now_pressed_at[user_id] = now
+    requested_at = datetime.now(timezone.utc)
     service = SubscriberService(settings, db, bot)
     async with lock:
         searching = None
         try:
-            if service.roles_to_search(user_id):
+            if service.roles_to_search(user_id, requested_at):
                 searching = await message.answer(NOW_SEARCHING_TEXT)
-            await service.refresh_for_user(user_id)
+            await service.refresh_for_user(user_id, requested_at)
         except Exception:
             # Поиск — лишь улучшение: при любом сбое отдаём последний сбор.
             logger.exception("Кнопка: поиск для %s упал", user_id)
@@ -713,7 +711,7 @@ async def btn_now(message: Message, db: VacancyDatabase, settings: Settings, bot
             outcome = "digest_running"
         else:
             try:
-                outcome = await service.send_now(user_id)
+                outcome = await service.send_now(user_id, requested_at=requested_at)
             except Exception:
                 logger.exception("Кнопка: подборка для %s не ушла", user_id)
                 outcome = "error"

@@ -38,9 +38,6 @@ from bot.subscriber_formatters import format_empty_notice, format_subscriber_hea
 
 logger = logging.getLogger(__name__)
 
-# Кнопка «Вакансии сейчас» ищет заново роли, собранные раньше этого срока;
-# более свежий сбор (утренний или по чужому нажатию) берётся как есть.
-NOW_FRESH_SEC = 30 * 60
 # Поиск по роли не удался (таймаут, сбой) — не повторяем его столько времени,
 # иначе при медленном HH каждое нажатие снова ждало бы до упора.
 NOW_RETRY_AFTER_FAIL_SEC = 10 * 60
@@ -50,19 +47,10 @@ NOW_SEARCH_BUDGET_SEC = 90
 NOW_MIN_ROLE_SEC = 30
 # Сколько ждать, пока закончится чужой поиск; дольше — отдаём последний сбор.
 NOW_LOCK_WAIT_SEC = 15
-# В это время (по часам бота) идут утренний сбор и рассылка: кнопка не ходит
-# на HH, чтобы не делить с рассылкой лимит запросов, и раздаёт последний сбор.
-NOW_QUIET_FROM = (9, 55)
-NOW_QUIET_TO = (10, 45)
 # Один живой поиск на процесс бота: бережём HH и лимит процессов хостинга.
 # Второе нажатие ждёт и берёт результат первого, а не ищет то же самое снова.
 _now_collect_lock: Optional[tuple] = None  # (цикл событий, замок)
 _now_failed_at: dict = {}  # роль → time.monotonic() неудачного поиска
-
-
-def is_quiet_time(hour: int, minute: int) -> bool:
-    """Окно утреннего сбора и рассылки, когда кнопка не ходит на HH."""
-    return NOW_QUIET_FROM <= (hour, minute) < NOW_QUIET_TO
 
 
 def _collect_lock() -> asyncio.Lock:
@@ -371,38 +359,30 @@ class SubscriberService:
         )
         return cache, failed, limited
 
-    def in_quiet_window(self) -> bool:
-        now = datetime.now(ZoneInfo(self.settings.timezone))
-        return is_quiet_time(now.hour, now.minute)
+    def _unchecked_roles(self, roles: list[str], requested_at: datetime) -> list[str]:
+        """Роли, для которых с момента нажатия не завершился полный сбор."""
+        info = self.db.role_cache_info(roles)
+        pending = [
+            role for role in roles
+            if role not in info or info[role][0] < requested_at or not info[role][1]
+        ]
+        # При лимите времени следующие нажатия должны дойти и до остальных ролей.
+        never_collected = datetime.min.replace(tzinfo=timezone.utc)
+        return sorted(pending, key=lambda role: info[role][0] if role in info else never_collected)
 
-    def roles_to_search(self, user_id: int) -> list:
-        """Роли подписчика, которые кнопка будет искать заново (пусто — раздаём последний сбор)."""
-        if self.in_quiet_window():
-            return []
-        role_ids = self.db.get_subscriber_roles(user_id)
-        if not role_ids:
-            return []
-        info = self.db.role_cache_info(role_ids)
-        now = datetime.now(timezone.utc)
-        mono = time.monotonic()
-        result = []
-        for role_id in role_ids:
-            failed_at = _now_failed_at.get(role_id)
-            if failed_at is not None and mono - failed_at < NOW_RETRY_AFTER_FAIL_SEC:
-                continue
-            collected = info.get(role_id)
-            if collected is None or not collected[1] or (now - collected[0]).total_seconds() > NOW_FRESH_SEC:
-                result.append(role_id)
-        return result
+    def roles_to_search(self, user_id: int, requested_at: datetime) -> list[str]:
+        roles = self._unchecked_roles(self.db.get_subscriber_roles(user_id), requested_at)
+        now = time.monotonic()
+        return [
+            role for role in roles
+            if role not in _now_failed_at or now - _now_failed_at[role] >= NOW_RETRY_AFTER_FAIL_SEC
+        ]
 
-    async def refresh_for_user(self, user_id: int) -> None:
-        """Кнопка «Вакансии сейчас»: заново собрать устаревшие роли подписчика.
-
-        Свежий (до 30 мин) и полный сбор роли не повторяется. Новый сбор
-        объединяется с прежним: если площадка не ответила, прежние вакансии не
-        теряются. Сбой, таймаут, занятый поиск — отдаём последний сбор.
-        """
-        if not self.roles_to_search(user_id):
+    async def refresh_for_user(self, user_id: int, requested_at: Optional[datetime] = None) -> None:
+        """Запросить сбор по ролям или использовать сбор, завершившийся уже после нажатия."""
+        if requested_at is None:
+            requested_at = datetime.now(timezone.utc)
+        if not self.roles_to_search(user_id, requested_at):
             return
         lock = _collect_lock()
         # shield + ручная уборка: в Python 3.8 отмена wait_for после успешного
@@ -421,11 +401,11 @@ class SubscriberService:
             return
         try:
             # Проверяем после ожидания: пока ждали, роль мог собрать другой пользователь.
-            stale = self.roles_to_search(user_id)
+            roles = self.roles_to_search(user_id, requested_at)
             loop = asyncio.get_event_loop()
             deadline = loop.time() + NOW_SEARCH_BUDGET_SEC
             with shared_feeds():
-                for role_id in stale:
+                for role_id in roles:
                     left = deadline - loop.time()
                     # Роль, которой не хватит времени, не начинаем: таймаут пометил бы
                     # её неудачной на 10 минут без её вины.
@@ -467,11 +447,11 @@ class SubscriberService:
         except Exception:
             logger.exception("Кнопка: не сохранил сбор роли %s", role_id)
 
-    async def send_now(self, user_id: int) -> str:
+    async def send_now(self, user_id: int, *, requested_at: Optional[datetime] = None) -> str:
         """Кнопка «Вакансии сейчас»: непросмотренные свежие вакансии из последнего сбора.
 
         Сам поиск — refresh_for_user (вызывается до этого). Возвращает исход
-        для ответа в чат: not_subscribed / no_cache / nothing_new / sent.
+        для ответа в чат: not_subscribed / no_cache / incomplete / nothing_new / sent.
         """
         role_ids = self.db.get_subscriber_roles(user_id)
         if not role_ids:
@@ -481,18 +461,14 @@ class SubscriberService:
             return "no_cache"
         region = self.db.get_region(user_id)
         vacancies, fresh = self._merge_for_roles(cache, role_ids, region)
-        if not dedupe_across_sources(self.db.unsent_to_subscriber(user_id, fresh)):
-            # Участник может проверить резюме, даже если утренние вакансии уже доставлены.
-            resume = await load_match_profile(self.db, self.bot, user_id)
-            if fresh and resume:
-                sample = dedupe_across_sources(fresh)[:3]
-                header = "Проверка резюме по ранее полученным вакансиям"
-                for text, _ in personal_pages(header, sample, resume, user_id=user_id):
-                    await self._safe_send(user_id, text)
-                return "sent"
-            return "nothing_new"
-        await self._send_to_user(user_id, role_ids, fresh, len(vacancies), region=region)
-        return "sent"
+        sent, _ = await self._send_to_user(
+            user_id, role_ids, fresh, len(vacancies), region=region, notify_if_empty=False,
+        )
+        if sent:
+            return "sent"
+        if requested_at is not None and self._unchecked_roles(role_ids, requested_at):
+            return "incomplete"
+        return "nothing_new"
 
     def _merge_for_roles(
         self, cache: dict[str, list[Vacancy]], role_ids: list[str], region: str = "cis"
@@ -522,9 +498,13 @@ class SubscriberService:
         total_found: int,
         roles_complete: bool = True,
         region: str = "cis",
+        *,
+        notify_if_empty: bool = True,
     ) -> tuple[int, bool]:
         """(сколько сообщений ушло, было ли это «новых нет»)."""
         all_new = dedupe_across_sources(self.db.unsent_to_subscriber(user_id, fresh_vacancies))
+        if not all_new and not notify_if_empty:
+            return 0, False
         to_post = self._limit_freshest(all_new)
         role_label = format_digest_roles_label(role_ids)
 

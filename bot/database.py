@@ -938,7 +938,7 @@ class VacancyDatabase:
             )
 
     def role_cache_info(self, roles: Iterable[str]) -> dict:
-        """{роль: (когда собрана UTC, собрана ли целиком)} — кнопка ищет заново устаревшие и неполные."""
+        """{роль: (когда собрана UTC, собрана ли целиком)} — для учёта общего поиска по одновременным нажатиям."""
         roles = list(roles)
         if not roles:
             return {}
