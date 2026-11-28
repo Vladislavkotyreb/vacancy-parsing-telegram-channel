@@ -118,17 +118,18 @@ class VacanciesNowTest(unittest.IsolatedAsyncioTestCase):
             await self.service.run_daily_digests()
         morning = {user_id: text for user_id, text, _ in self.bot.calls}
         line = "Совместимость вакансии — 79%"
-        match_line, natal_line = morning[10].splitlines()[-2:]
-        self.assertEqual(match_line, line)
-        self.assertRegex(natal_line, r"^✦ Натальная карта — (?:[1-9][0-9]?|100)%$")
+        self.assertEqual(morning[10].splitlines()[-1], line)
+        for text in morning.values():
+            self.assertNotIn("Натальная карта", text)
         self.assertNotIn("Совместимость вакансии", morning[20])
-        self.assertRegex(morning[20].splitlines()[-1], r"^✦ Натальная карта — (?:[1-9][0-9]?|100)%$")
         self.assertEqual(await self.service.send_now(10), "nothing_new")
         # Этот же профиль получает вакансию вручную впервые.
         self.db.save_resume(30, cv.skills, profile=asdict(cv))
         self.db.set_subscriber_roles(30, ["product_designer"])
         self.assertEqual(await self.service.send_now(30), "sent")
-        self.assertIn(line, self.bot.calls[-1][1].splitlines())
+        manual = self.bot.calls[-1][1]
+        self.assertEqual(manual.splitlines()[-1], line)
+        self.assertNotIn("Натальная карта", manual)
 
     async def test_cache_save_failure_does_not_break_digest(self):
         self.db.set_subscriber_roles(10, ["backend_python"])

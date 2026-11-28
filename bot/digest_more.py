@@ -75,7 +75,7 @@ async def send_overflow(
     сохранятся и нажатие можно повторить.
     """
     resume = await load_match_profile(db, bot, user_id)
-    messages = personal_pages(format_more_header(len(vacancies)), vacancies, resume, user_id=user_id)
+    messages = personal_pages(format_more_header(len(vacancies)), vacancies, resume)
     for index, (text, batch) in enumerate(messages):
         if index:
             await asyncio.sleep(0.4)

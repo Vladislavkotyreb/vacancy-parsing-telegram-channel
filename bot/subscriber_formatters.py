@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from hashlib import sha256
 from html import escape
 from typing import Optional, Union
 
@@ -61,7 +60,6 @@ def format_subscriber_header(
 
 def personal_pages(
     header: str, vacancies: list[Vacancy], resume: Optional[Union[ResumeProfile, list[str]]],
-    *, user_id: Optional[int] = None,
 ) -> list[tuple[str, list[Vacancy]]]:
     """Текст и вакансии каждой страницы для отметки после успешной отправки."""
     pages = []
@@ -76,10 +74,6 @@ def personal_pages(
             score = compatibility(vacancy, resume) if isinstance(resume, ResumeProfile) else skill_score(vacancy, resume)
             if score is not None:
                 metric = f"\nСовместимость вакансии — {score}%"
-        # Даже в карточке без резюме или требований есть прогноз по натальной карте.
-        seed = vacancy.uid if user_id is None else f"{user_id}:{vacancy.uid}"
-        stars = 1 + int.from_bytes(sha256(seed.encode("utf-8")).digest()[:8], "big") % 100
-        metric += f"\n✦ Натальная карта — {stars}%"
         block = format_vacancy(vacancy, personal=True) + metric
         if len(continuation + SEPARATOR + block) > TELEGRAM_MAX_LENGTH:
             block = escape_html(vacancy.title[:160])

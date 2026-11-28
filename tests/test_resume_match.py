@@ -37,7 +37,7 @@ def test_personal_scores_from_cached_source_tags(tmp_path):
         [(text, batch)] = personal_pages("Сегодня", [cached], db.resume_skills(user))
         assert batch == [cached]
         assert expected in text
-        assert text.splitlines()[-2] == "Совместимость вакансии — " + expected
+        assert text.splitlines()[-1] == "Совместимость вакансии — " + expected
     db.delete_resume(1)
     assert db.get_resume(1) is None
     assert db.resume_skills(2) == ["HTML"]
@@ -47,6 +47,8 @@ def test_personal_scores_from_cached_source_tags(tmp_path):
 def test_old_rows_without_skill_data():
     old = Vacancy("old", "1", "Разработчик", "А", "https://example.org")
     assert skill_score(old, ["SQL"]) is None
+    [(text, _)] = personal_pages("Сегодня", [old], ["SQL"])
+    assert text.endswith(format_vacancy(old, personal=True))
     old.title = "Python developer"
     assert skill_score(old, ["SQL"]) == 0
 

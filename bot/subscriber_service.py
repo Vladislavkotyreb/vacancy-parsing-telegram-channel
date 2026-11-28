@@ -539,7 +539,7 @@ class SubscriberService:
             total_new=len(all_new), region=region,
         )
         resume = await load_match_profile(self.db, self.bot, user_id)
-        messages = personal_pages(header, to_post, resume, user_id=user_id)
+        messages = personal_pages(header, to_post, resume)
         for index, (message, vacancies) in enumerate(messages):
             is_last = index == len(messages) - 1
             markup = more if is_last else None

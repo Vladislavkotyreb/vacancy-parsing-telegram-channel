@@ -121,7 +121,9 @@ class DigestMoreTest(unittest.IsolatedAsyncioTestCase):
         callback = await self.press_and_reset()
 
         self.assertEqual(_numbers(self.texts()), set(range(30, 45)))
-        self.assertEqual("\n".join(self.texts()).count("Совместимость вакансии — 100%\n✦ Натальная карта — "), 15)
+        text = "\n".join(self.texts())
+        self.assertEqual(text.count("Совместимость вакансии — 100%"), 15)
+        self.assertNotIn("Натальная карта", text)
         self.assertIn(format_more_header(15), self.texts()[0])
         self.assertTrue(self.db.is_sent_to_subscriber(USER, "hh.ru:44"))
         callback.answer.assert_awaited()
